@@ -2,7 +2,7 @@ bc7enc - Fast, single source file BC1-5 and BC7/BPTC GPU texture encoders with o
 
 This repo is a work in progress. RDO BC1/4 is in and working well. BC3/5/7 are on the way.
 
-To compile:
+To compile (tested with clang 6.0.0 x64 and MSVC 2019 x64):
 
 ```
 cmake .
