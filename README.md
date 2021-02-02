@@ -1,4 +1,4 @@
-bc7enc - Fast, single source file BC1-5 and BC7/BPTC GPU texture encoders.
+bc7enc - Fast, single source file BC1-5 and BC7/BPTC GPU texture encoders with optional Rate Distortion Optimization (RDO) support.
 
 To compile:
 
