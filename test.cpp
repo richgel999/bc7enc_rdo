@@ -57,7 +57,7 @@ static int print_usage()
 	fprintf(stderr, "-zeq# BC1: Separately set RDO quality for endpoint RDO\n");
 	fprintf(stderr, "-zsq# BC1: Separately set RDO quality for selector RDO\n");
 	fprintf(stderr, "-zd BC1: Enable debug output\n");
-	fprintf(stderr, "-zc# BC1: Set LZ dictionary size (higher=more effective but slower, default=8192)\n");
+	fprintf(stderr, "-zc# BC1: Set LZ dictionary size (higher=more effective but slower, default=2048)\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "-b BC1: Enable 3-color mode for blocks containing black or very dark pixels. (Important: engine/shader MUST ignore decoded texture alpha if this flag is enabled!)\n");
 	fprintf(stderr, "-c BC1: Disable 3-color mode for solid color blocks\n");
@@ -498,7 +498,7 @@ int main(int argc, char *argv[])
 	float rdo_smooth_block_error_scale = rgbcx::BC1_RDO_DEFAULT_SMOOTH_BLOCK_ERROR_SCALE;
 	float rdo_alpha_smooth_block_error_scale = rgbcx::BC4_RDO_DEFAULT_SMOOTH_BLOCK_ERROR_SCALE;
 	bool custom_rdo_smooth_block_error_scale = false;
-	uint32_t rdo_dict_size = rgbcx::BC1_RDO_DEFAULT_LZ_DICT_SIZE;
+	uint32_t rdo_dict_size = 2048;//rgbcx::BC1_RDO_DEFAULT_LZ_DICT_SIZE;
 	
 	bool use_hq_bc345 = false;
 	int bc345_search_rad = 5;
@@ -650,19 +650,19 @@ int main(int argc, char *argv[])
 				}
 				case 'z':
 				{
-					if (strcmp(pArg, "-zr") == 0)
+					if (strncmp(pArg, "-zr", 3) == 0)
 					{
 						rdo_refinement = false;
 					}
-					else if (strcmp(pArg, "-zs") == 0)
+					else if (strncmp(pArg, "-zs", 3) == 0)
 					{
 						selector_rdo = false;
 					}
-					else if (strcmp(pArg, "-ze") == 0)
+					else if (strncmp(pArg, "-ze", 3) == 0)
 					{
 						endpoint_rdo = false;
 					}
-					else if (strcmp(pArg, "-zd") == 0)
+					else if (strncmp(pArg, "-zd", 3) == 0)
 					{
 						rdo_debug_output = true;
 					}
