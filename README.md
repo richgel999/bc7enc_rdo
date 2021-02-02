@@ -41,7 +41,7 @@ Use -zb1.0 to disable smooth block error scaling completely, which increases RDO
 To encode to BC1 with RDO at the highest achievable quality/effectiveness (this is noticeably slower):
 
 ```
-./bc7enc -1 -z1.0 -zd32768 -L18 blah.png
+./bc7enc -1 -z1.0 -zc32768 -L18 blah.png
 ```
 
 This sets the BC1 encoder to level 18 (highest quality), the LZ dictionary size to 32KB (the highest setting that makes sense for Deflate). Dictionary sizes of 2KB (the default) to 8KB are way faster and in practice are almost as effective. The maximum dictionary setting supported by the command line tool is 64KB, but this would be very slow.
