@@ -50,6 +50,7 @@ RDO mode is also supported with BC4, using the -4 option. RDO BC3/5 (which are j
 
 Features:
 - Rate Distortion Optimization (RDO)
+
 Currently for BC1 and BC4. Currently implementing BC3/5 (which is easy).
 RDO is still a work in progress, but BC1/4 are working fairly well now.
 RDO BC7 is next.
