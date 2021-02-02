@@ -24,14 +24,19 @@ To encode to BC1 with Rate Distortion Optimization (RDO) using the default optio
 
 The -z option controls lambda, or the rate vs. distortion tradeoff. 0 = maximum quality, higher values=lower bitrates but lower quality. Try values [.5-8].
 
-To encode to BC1 with Rate Distortion Optimization (RDO) with a higher then default smooth block scale factor (which is 10.0):
+To encode to BC1 with RDO with RDO debug output, to monitor the percentage of blocks impacted:
+```
+./bc7enc -1 -z1.0 -zd blah.png
+```
+
+To encode to BC1 with RDO with a higher then default smooth block scale factor (which is 10.0):
 ```
 ./bc7enc -1 -z1.0 -zb20.0 blah.png
 ```
 
 Use -zb1.0 to disable smooth block error scaling completely, which increases RDO performance but can result in noticeable artifacts on smooth/flat blocks at higher lambdas.
 
-To encode to BC1 with Rate Distortion Optimization (RDO) at the highest achievable quality/effectiveness (this is noticeably slower):
+To encode to BC1 with RDO at the highest achievable quality/effectiveness (this is noticeably slower):
 
 ```
 ./bc7enc -1 -z1.0 -zd32768 -L18 blah.png
