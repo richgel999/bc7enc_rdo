@@ -47,6 +47,7 @@ set (BC7ENC_SRC_LIST ${COMMON_SRC_LIST}
 	bc7decomp.cpp
 	lodepng.cpp	
 	test.cpp
+	rgbcx.cpp
 	)
 	
 add_executable(bc7enc ${BC7ENC_SRC_LIST})

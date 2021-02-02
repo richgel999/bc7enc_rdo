@@ -1,5 +1,8 @@
 // rgbcx.cpp - see license at end of rgbcx.h
 #include "rgbcx.h"
+#include <string.h>
+#include <math.h>
+#include <vector>
 
 #define MINIZ_HEADER_FILE_ONLY
 #include "miniz.h"
@@ -10,7 +13,9 @@ namespace rgbcx
 
 	const uint32_t NUM_UNIQUE_TOTAL_ORDERINGS4 = 969;
 
+#ifdef _MSC_VER
 #pragma region
+#endif
 	// All total orderings for 16 pixels 2-bit selectors.
 	// BC1 selector order 0, 2, 3, 1 (i.e. the selectors are reordered into linear order).
 	static uint8_t g_unique_total_orders4[NUM_UNIQUE_TOTAL_ORDERINGS4][4] =
@@ -232,10 +237,12 @@ namespace rgbcx
 		{ 0,2,5,1,3,19,22,26,16,24,29,7,14,6,4,25,18,44,8,48,12,61,20,21,10,35,65,56,23,40,17,107  },
 		{ 1,7,8,29,56,0,10,14,2,42,72,5,4,65,3,30,84,94,67,9,25,133,111,11,32,108,16,63,21,96,26,48  }
 	};
+#ifdef _MSC_VER
 #pragma endregion
+#endif
 
 	static inline uint32_t iabs(int32_t i) { return (i < 0) ? static_cast<uint32_t>(-i) : static_cast<uint32_t>(i); }
-	static inline uint64_t iabs(int64_t i) { return (i < 0) ? static_cast<uint64_t>(-i) : static_cast<uint64_t>(i); }
+	//static inline uint64_t iabs(int64_t i) { return (i < 0) ? static_cast<uint64_t>(-i) : static_cast<uint64_t>(i); }
 
 	static inline uint8_t to_5(uint32_t v) { v = v * 31 + 128; return (uint8_t)((v + (v >> 8)) >> 8); }
 	static inline uint8_t to_6(uint32_t v) { v = v * 63 + 128; return (uint8_t)((v + (v >> 8)) >> 8); }
@@ -248,7 +255,7 @@ namespace rgbcx
 	static inline int32_t clampi(int32_t value, int32_t low, int32_t high) { if (value < low) value = low; else if (value > high) value = high;	return value; }
 
 	static inline int squarei(int a) { return a * a; }
-	static inline int absi(int a) { return (a < 0) ? -a : a; }
+	//static inline int absi(int a) { return (a < 0) ? -a : a; }
 
 	template<typename F> inline F lerp(F a, F b, F s) { return a + (b - a) * s; }
 
@@ -3160,7 +3167,7 @@ namespace rgbcx
 				cur_err += color_distance(pPixels[i], orig_blk_colors[i]);
 
 			// Divide by 16*3 to compute RMS error
-			float cur_rms_err = sqrtf((float)cur_err * (1.0f / 48.0f));
+			//float cur_rms_err = sqrtf((float)cur_err * (1.0f / 48.0f));
 
 			if (!cur_err)
 				continue;
@@ -3666,6 +3673,7 @@ namespace rgbcx
 
 	static float bc4_compute_average_block_rms_err(bc4_block* pBC4_blocks, uint32_t block_stride, uint32_t num_blocks, const color32* pBlock_pixels, uint32_t comp_index, const bc4_rdo_params& params)
 	{
+		(void)params;
 		uint64_t total_err = 0;
 
 		for (uint32_t block_index = 0; block_index < num_blocks; block_index++)
@@ -3740,6 +3748,8 @@ namespace rgbcx
 		const bc4_rdo_params& params,
 		uint32_t& total_skipped, uint32_t& total_endpoints_refined, uint32_t& total_selectors_refined, uint32_t& total_merged)
 	{
+		(void)total_selectors_refined;
+		
 		const uint32_t bytes_per_block = sizeof(bc4_block) * block_stride;
 		const int total_blocks_to_check = std::max<uint32_t>(1U, params.m_lz_dict_size / bytes_per_block);
 
