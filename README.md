@@ -1,5 +1,7 @@
 bc7enc - Fast, single source file BC1-5 and BC7/BPTC GPU texture encoders with optional Rate Distortion Optimization (RDO) support.
 
+This repo is a work in progress. RDO BC1/4 is in and working well. BC3/5/7 are on the way.
+
 To compile:
 
 ```
