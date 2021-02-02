@@ -1,6 +1,11 @@
 bc7enc - Fast, single source file BC1-5 and BC7/BPTC GPU texture encoders.
 
 Features:
+- Rate Distortion Optimization (RDO)
+Currently for BC1 and BC4. Currently implementing BC3/5 (which is easy).
+BC7 is next (which is significant).
+RDO is still a work in progress, but BC1/4 are working fairly well now.
+
 - BC1/3 encoder (in [rgbcx.h](https://github.com/richgel999/bc7enc/blob/master/rgbcx.h)) uses a new algorithm (which we've named "prioritized cluster fit") which is 3-4x faster than traditional cluster fit (as implemented in [libsquish](https://github.com/svn2github/libsquish) with SSE2) at the same or slightly higher average quality using scalar CPU instructions. This algorithm is suitable for GPU encoder implementations.
 
 The BC1/BC3 encoder also implements [Castano's optimal endpoint rounding improvement](https://gist.github.com/castano/c92c7626f288f9e99e158520b14a61cf).
