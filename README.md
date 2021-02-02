@@ -1,5 +1,46 @@
 bc7enc - Fast, single source file BC1-5 and BC7/BPTC GPU texture encoders.
 
+To compile:
+
+```
+cmake .
+make
+```
+
+To encode to BC1:
+```
+./bc7enc -1 blah.png
+```
+
+To encode to BC1 with highest quality:
+```
+./bc7enc.exe -L18 -1 blah.png
+```
+
+To encode to BC1 with Rate Distortion Optimization (RDO) using the default options at lambda=1.0:
+```
+./bc7enc.exe -1 -z1.0 blah.png
+```
+
+The -z option controls lambda, or the rate vs. distortion tradeoff. 0 = maximum quality, higher values=lower bitrates but lower quality. Try values [.5-8].
+
+To encode to BC1 with Rate Distortion Optimization (RDO) with a higher then default smooth block scale factor (which is 10.0):
+```
+./bc7enc.exe -1 -z1.0 -zb20.0 blah.png
+```
+
+Use -zb1.0 to disable smooth block error scaling completely, which increases RDO performance but can result in noticeable artifacts on smooth/flat blocks at higher lambdas.
+
+To encode to BC1 with Rate Distortion Optimization (RDO) at the highest achievable quality/effectiveness (this is noticeably slower):
+
+```
+./bc7enc.exe -1 -z1.0 -zd32768 -L18 blah.png
+```
+
+This sets the BC1 encoder to level 18 (highest quality), the LZ dictionary size to 32KB (the highest setting that makes sense for Deflate).
+
+RDO mode is also supported with BC4, using the -4 option. RDO BC3/5 (which are just variants of BC1/4) are coming next.
+
 Features:
 - Rate Distortion Optimization (RDO)
 Currently for BC1 and BC4. Currently implementing BC3/5 (which is easy).
