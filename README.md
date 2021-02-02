@@ -44,7 +44,7 @@ To encode to BC1 with RDO at the highest achievable quality/effectiveness (this 
 ./bc7enc -1 -z1.0 -zd32768 -L18 blah.png
 ```
 
-This sets the BC1 encoder to level 18 (highest quality), the LZ dictionary size to 32KB (the highest setting that makes sense for Deflate). Dictionary sizes of 4KB or 8KB (the default) are way faster and are almost as effective.
+This sets the BC1 encoder to level 18 (highest quality), the LZ dictionary size to 32KB (the highest setting that makes sense for Deflate). Dictionary sizes of 2KB (the default) to 8KB are way faster and in practice are almost as effective. The maximum dictionary setting supported by the command line tool is 64KB, but this would be very slow.
 
 RDO mode is also supported with BC4, using the -4 option. RDO BC3/5 (which are just variants of BC1/4) are coming next.
 
