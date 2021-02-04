@@ -1911,6 +1911,7 @@ static void handle_alpha_block(void *pBlock, const color_quad_u8 *pPixels, const
 	pParams->m_num_selector_weights = 16;
 	pParams->m_comp_bits = 7;
 	pParams->m_has_pbits = BC7ENC_TRUE;
+	pParams->m_endpoints_share_pbit = BC7ENC_FALSE;
 	pParams->m_has_alpha = BC7ENC_TRUE;
 	pParams->m_perceptual = pComp_params->m_perceptual;
 	pParams->m_num_pixels = 16;
