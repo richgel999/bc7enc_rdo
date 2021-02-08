@@ -9,7 +9,7 @@ cmake .
 make
 ```
 
-Note the MSVC build enabled OpenMP for faster compression.
+Note the MSVC build enables OpenMP for faster compression.
 
 To encode to non-RDO BC7 using entropy reduced or quantized/weighted BC7 (super fast, slightly reduced quality, but 5-10% better LZ compression):
 
