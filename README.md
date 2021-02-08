@@ -1,14 +1,31 @@
-Note: The latest development repo with an early version of RDO BC7 is [here](https://github.com/richgel999/bc7enc_rdo_devel).
-
 bc7enc - Fast, single source file BC1-5 and BC7/BPTC GPU texture encoders with optional Rate Distortion Optimization (RDO) support.
 
-This repo is a work in progress. RDO BC1/4 is in and working well. BC3/5/7 are on the way.
+This repo is a work in progress. RDO BC1/4 is in and working okay, but I'm going to be rewriting it next. BC7 RDO is in and working surprisingly well. I have only minimally tested the new RDO BC7 encoder, especially on alpha textures. You can see examples of the RDO BC7 encoder's current output [here](https://richg42.blogspot.com/2021/02/more-rdo-bc7-encoding.html).
 
-To compile (tested with clang 6.0.0 x64 and MSVC 2019 x64):
+To compile (tested MSVC 2019 x64 and clang 6.0.0):
 
 ```
 cmake .
 make
+```
+
+To encode to non-RDO BC7 using entropy reduced or quantized/weighted BC7 (super fast, slightly reduced quality, but 5-10% better LZ compression):
+
+```
+./bc7enc -o -u4 -zc1024 blah.png -e
+```
+
+
+To encode to RDO BC7 using the latest algorithm (using the Entropy Reduction Transform - or ERT) combined with reduced entropy BC7 encoding:
+
+```
+./bc7enc -o -u4 -zc1024 blah.png -e -z1.0
+```
+
+To encode to RDO BC7 using the latest algorithm (using the Entropy Reduction Transform - or ERT):
+
+```
+./bc7enc -o -u4 -zc1024 blah.png -e -z1.0
 ```
 
 To encode to BC1:
@@ -21,9 +38,9 @@ To encode to BC1 with highest quality:
 ./bc7enc -L18 -1 blah.png
 ```
 
-To encode to BC1 with Rate Distortion Optimization (RDO) using the default options at lambda=1.0:
+To encode to BC1 with Rate Distortion Optimization (RDO) at lambda=1.0:
 ```
-./bc7enc -1 -z1.0 blah.png
+./bc7enc -L10 -1 -z1.0 blah.png
 ```
 
 The -z option controls lambda, or the rate vs. distortion tradeoff. 0 = maximum quality, higher values=lower bitrates but lower quality. Try values [.5-8].
@@ -39,6 +56,8 @@ To encode to BC1 with RDO with a higher then default smooth block scale factor (
 ```
 
 Use -zb1.0 to disable smooth block error scaling completely, which increases RDO performance but can result in noticeable artifacts on smooth/flat blocks at higher lambdas.
+
+Use -zc# to control the RDO window size in bytes. Good values are 128-8192. -zt to disable RDO multithreading.
 
 To encode to BC1 with RDO at the highest achievable quality/effectiveness (this is noticeably slower):
 
@@ -66,12 +85,6 @@ rgbcx's BC1 encoder is faster than both AMD Compressonator and libsquish at the 
 - BC7 encoder (in bc7enc.c/.h) has perceptual colorspace metric support, and is very fast compared to ispc_texcomp (see below) for RGB textures. Important: The BC7 encoder included in this repo is still a work in progress. I took bc7enc16 and added more modes for better alpha support, but it needs more testing and development.
 
 - Full decoders for BC1-5/7. BC7 decoder is in bc7decomp.cpp/.h, BC1-5 decoders in rgbcx.h.
-
-This project is basically a demo of some of the techniques we use in Basis BC7,
-which is Binomial's state of the art vectorized BC7 encoder. Basis BC7 is the
-highest quality and fastest CPU BC7 encoder available (2-3x faster than
-ispc_texcomp). It supports all modes and linear/perceptual colorspace metrics.
-Licensees get full ISPC source code so they can customize the codec as needed.
 
 bc7enc currently only supports modes 1 and 6 for RGB, and modes 1, 5, 6, and 7 for alpha. The plan is to add all the modes. See the [bc7enc16](https://github.com/richgel999/bc7enc16) project for the previous version (which only supports modes 1 and 6). Note this readme still refers to "bc7enc16", but bc7enc is the same encoder but with more alpha modes.
 
