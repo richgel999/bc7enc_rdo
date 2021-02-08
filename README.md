@@ -1,4 +1,4 @@
-bc7enc - Fast, single source file BC1-5 and BC7/BPTC GPU texture encoders with optional Rate Distortion Optimization (RDO) support.
+bc7enc - Fast, single source file BC1-5 and BC7 (BPTC) GPU texture encoders with optional Rate Distortion Optimization (RDO).
 
 This repo is a work in progress. RDO BC1/4 is in and working okay, but I'm going to be rewriting it next. BC7 RDO is in and working surprisingly well. I have only minimally tested the new RDO BC7 encoder, especially on alpha textures. You can see examples of the RDO BC7 encoder's current output [here](https://richg42.blogspot.com/2021/02/more-rdo-bc7-encoding.html).
 
@@ -25,7 +25,7 @@ To encode to RDO BC7 using the latest algorithm (using the Entropy Reduction Tra
 To encode to RDO BC7 using the latest algorithm (using the Entropy Reduction Transform - or ERT):
 
 ```
-./bc7enc -o -u4 -zc1024 blah.png -e -z1.0
+./bc7enc -o -u4 -zc1024 blah.png -z1.0
 ```
 
 To encode to BC1:
@@ -74,7 +74,8 @@ Features:
 
 Currently for BC1 and BC4. Currently implementing BC3/5 (which is easy).
 RDO is still a work in progress, but BC1/4 are working fairly well now.
-RDO BC7 is next.
+
+The RDO BC7 encoder is my latest RDO encoder. RDO1-5 still need work.
 
 - BC1/3 encoder (in [rgbcx.h](https://github.com/richgel999/bc7enc/blob/master/rgbcx.h)) uses a new algorithm (which we've named "prioritized cluster fit") which is 3-4x faster than traditional cluster fit (as implemented in [libsquish](https://github.com/svn2github/libsquish) with SSE2) at the same or slightly higher average quality using scalar CPU instructions. This algorithm is suitable for GPU encoder implementations.
 
