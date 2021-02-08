@@ -1,3 +1,5 @@
+Note: The latest development repo with an early version of RDO BC7 is [here](https://github.com/richgel999/bc7enc_rdo_devel).
+
 bc7enc - Fast, single source file BC1-5 and BC7/BPTC GPU texture encoders with optional Rate Distortion Optimization (RDO) support.
 
 This repo is a work in progress. RDO BC1/4 is in and working well. BC3/5/7 are on the way.
