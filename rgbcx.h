@@ -58,6 +58,10 @@
 #ifndef RGBCX_INCLUDE_H
 #define RGBCX_INCLUDE_H
 
+#ifdef _MSC_VER
+#pragma warning (disable:4201) //nameless struct/union
+#endif
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <algorithm>

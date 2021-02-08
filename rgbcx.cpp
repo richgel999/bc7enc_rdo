@@ -1122,7 +1122,7 @@ namespace rgbcx
 
 	static inline uint32_t bc1_find_sels3_fullerr(bool use_black, const color32* pSrc_pixels, uint32_t lr, uint32_t lg, uint32_t lb, uint32_t hr, uint32_t hg, uint32_t hb, uint8_t sels[16], uint32_t cur_err, const uint8_t* pForce_selectors)
 	{
-		uint32_t block_r[3], block_g[3], block_b[3];
+		uint32_t block_r[4], block_g[4], block_b[4];
 		bc1_get_block_colors3(block_r, block_g, block_b, lr, lg, lb, hr, hg, hb);
 
 		uint32_t total_err = 0;
@@ -1131,8 +1131,8 @@ namespace rgbcx
 		{
 			memcpy(sels, pForce_selectors, 16);
 
-			uint32_t block_r[4], block_g[4], block_b[4];
-			bc1_get_block_colors3(block_r, block_g, block_b, lr, lg, lb, hr, hg, hb);
+			//uint32_t block_r[4], block_g[4], block_b[4];
+			//bc1_get_block_colors3(block_r, block_g, block_b, lr, lg, lb, hr, hg, hb);
 
 			block_r[3] = 0; block_g[3] = 0; block_b[3] = 0;
 
@@ -2806,8 +2806,8 @@ namespace rgbcx
 				for (int hi_delta = -(int)search_rad; hi_delta <= (int)search_rad; hi_delta++)
 				{
 					bc4_block trial_block;
-					trial_block.m_endpoints[0] = clamp<int>(max_val + hi_delta, 0, 255);
-					trial_block.m_endpoints[1] = clamp<int>(min_val + lo_delta, 0, 255);
+					trial_block.m_endpoints[0] = (uint8_t)clamp<int>(max_val + hi_delta, 0, 255);
+					trial_block.m_endpoints[1] = (uint8_t)clamp<int>(min_val + lo_delta, 0, 255);
 
 					if (trial_block.m_endpoints[0] == trial_block.m_endpoints[1])
 						continue;
@@ -3720,7 +3720,7 @@ namespace rgbcx
 			const uint64_t sel_bits = orig_blk.get_selector_bits();
 			for (uint32_t y = 0; y < 4; y++)
 				for (uint32_t x = 0; x < 4; x++)
-					orig_selectors[x + y * 4] = orig_blk.get_selector(x, y, sel_bits);
+					orig_selectors[x + y * 4] = (uint8_t)orig_blk.get_selector(x, y, sel_bits);
 
 			bc4_block trial_blk;
 			uint32_t trial_err = encode_bc4_hq(&trial_blk, (const uint8_t*)pPixels + comp_index, 4, params.m_search_radius, BC4_USE_ALL_MODES, orig_selectors);

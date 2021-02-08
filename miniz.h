@@ -18,6 +18,11 @@
    limitations under the License.
 */
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable:4505) //warning C4505: 'def_realloc_func': unreferenced local function has been removed
+#endif
+
 #ifndef MINIZ_HEADER_INCLUDED
 #define MINIZ_HEADER_INCLUDED
 
@@ -1613,11 +1618,11 @@ static void tdefl_start_dynamic_block(tdefl_compressor *d)
 
   if (d->m_flags & TDEFL_TRACK_TOTAL_HUFF_COUNT)
   {
-     for (int i = 0; i < TDEFL_MAX_HUFF_SYMBOLS_0; i++)
-        d->m_huff_total_count[0][i] += d->m_huff_count[0][i];
+     for (int j = 0; j < TDEFL_MAX_HUFF_SYMBOLS_0; j++)
+        d->m_huff_total_count[0][j] += d->m_huff_count[0][j];
      
-     for (int i = 0; i < TDEFL_MAX_HUFF_SYMBOLS_1; i++)
-        d->m_huff_total_count[1][i] += d->m_huff_count[1][i];
+     for (int j = 0; j < TDEFL_MAX_HUFF_SYMBOLS_1; j++)
+        d->m_huff_total_count[1][j] += d->m_huff_count[1][j];
   }
 
   tdefl_optimize_huffman_table(d, 0, TDEFL_MAX_HUFF_SYMBOLS_0, 15, MZ_FALSE);
@@ -2531,3 +2536,6 @@ void *tdefl_write_image_to_png_file_in_memory(const void *pImage, int w, int h, 
 
 #endif // MINIZ_HEADER_FILE_ONLY
 
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif

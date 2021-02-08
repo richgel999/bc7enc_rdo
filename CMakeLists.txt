@@ -24,6 +24,12 @@ set(CMAKE_C_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g")
 
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+else()
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /openmp /W4")
+set(CMAKE_C_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /openmp /W4")
+
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /openmp /W4")
+set(CMAKE_C_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /openmp /W4")
 endif()
 
 # -fno-strict-aliasing shouldn't be necessary, it's here because that is what MSVC uses by default and that's what I've tested with the most.
@@ -43,11 +49,19 @@ set(CMAKE_CXX_FLAGS_RELEASE  "${CMAKE_CXX_FLAGS_RELEASE} ${GCC_COMPILE_FLAGS}")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${GCC_COMPILE_FLAGS} -D_DEBUG")
 
 set (BC7ENC_SRC_LIST ${COMMON_SRC_LIST}
-	bc7enc.c
+	bc7enc.cpp
 	bc7decomp.cpp
 	lodepng.cpp	
 	test.cpp
 	rgbcx.cpp
+	utils.cpp
+	utils.h
+	miniz.h
+	bc7enc.h
+	dds_defs.h
+	rgbcx.h
+	rgbcx_table4.h
+	rgbcx_table4_small.h
 	)
 	
 add_executable(bc7enc ${BC7ENC_SRC_LIST})
