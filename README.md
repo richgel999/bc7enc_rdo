@@ -12,17 +12,16 @@ make
 To encode to non-RDO BC7 using entropy reduced or quantized/weighted BC7 (super fast, slightly reduced quality, but 5-10% better LZ compression):
 
 ```
-./bc7enc -o -u4 -zc1024 blah.png -e
+./bc7enc -o -u4 blah.png -e
 ```
-
 
 To encode to RDO BC7 using the latest algorithm (using the Entropy Reduction Transform - or ERT) combined with reduced entropy BC7 encoding:
 
 ```
-./bc7enc -o -u4 -zc1024 blah.png -e -z1.0
+./bc7enc -o -u4 -zc256 blah.png -e -z1.0
 ```
 
-To encode to RDO BC7 using the latest algorithm (using the Entropy Reduction Transform - or ERT):
+To encode to RDO BC7 using the latest algorithm (using the Entropy Reduction Transform - or ERT) at higher effectivenes using a larger window size:
 
 ```
 ./bc7enc -o -u4 -zc1024 blah.png -z1.0
