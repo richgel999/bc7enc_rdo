@@ -2,6 +2,8 @@ bc7enc - Fast, single source file BC1-5 and BC7 (BPTC) GPU texture encoders with
 
 This repo is a work in progress. RDO BC1/4 is in and working okay, but I'm going to be rewriting it next. BC7 RDO is in and working surprisingly well. I have only minimally tested the new RDO BC7 encoder, especially on alpha textures. You can see examples of the RDO BC7 encoder's current output [here](https://richg42.blogspot.com/2021/02/more-rdo-bc7-encoding.html). Some examples on how to use the command line tool for various BC7 modes are on my blog, [here](https://richg42.blogspot.com/2021/02/how-to-use-bc7encrdo.html).
 
+Note the BC7 encoder in bc7enc.cpp only supports modes 1/5/6/7, but the RDO post-processor function bc7enc_reduce_entropy() supports all BC7 modes.
+
 To compile (tested MSVC 2019 x64 and clang 6.0.0):
 
 ```
