@@ -29,10 +29,22 @@ To encode to RDO BC7 using the entropy reduction transform combined with reduced
 ./bc7enc -o -zc256 blah.png -e -z1.0
 ```
 
+To encode to RDO BC7 using the entropy reduction transform at lower quality, combined with reduced entropy BC7 encoding, with a slightly larger window size than the default which is 128 bytes:
+
+```
+./bc7enc -o -zc256 blah.png -e -z2.0
+```
+
 To encode to RDO BC7 using the entropy reduction transform at higher effectivenes using a larger window size:
 
 ```
 ./bc7enc -o -zc1024 blah.png -z1.0
+```
+
+To encode to RDO BC7 using the entropy reduction transform at higher effectivenes using a larger window size, with a manually specified max smooth block max error scale:
+
+```
+./bc7enc -o -zc1024 blah.png -z2.0 -zb30.0
 ```
 
 To encode to BC1:
