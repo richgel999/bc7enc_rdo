@@ -3,11 +3,18 @@
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 
+#define BC7ENC_VERSION "1.05"
+
+#define LZHAM_STATS (0)
+#define DECODE_BC4_TO_GRAYSCALE (0)
+#define COMPUTE_SSIM (0)
+
 #if _OPENMP
 #include <omp.h>
 #endif
 
 #include "utils.h"
+#include "ert.h"
 
 #include "bc7enc.h"
 #include "bc7decomp.h"
@@ -17,17 +24,13 @@
 
 #include "miniz.h"
 
-#define COMPUTE_SSIM (0)
-
-const int MAX_UBER_LEVEL = 5;
-
 static int print_usage()
 {
-	fprintf(stderr, "bc7enc\n");
 	fprintf(stderr, "Reads PNG files (with or without alpha channels) and packs them to BC1-5 or BC7/BPTC (default) using\nmodes 1, 6 (opaque blocks) or modes 1, 5, 6, and 7 (alpha blocks).\n");
 	fprintf(stderr, "Supports optional reduced entropy BC7 encoding (using -e) and Rate Distortion Optimization (RDO) for BC1-7 (using -z# where # is lambda).\n");
-	fprintf(stderr, "By default, this tool compresses to BC7. A DX10 DDS file and a unpacked PNG file will be written to the source\ndirectory with the .dds/_unpacked.png/_unpacked_alpha.png suffixes.\n\n");
-	fprintf(stderr, "Usage: bc7enc [-apng_filename] [options] input_filename.png [compressed_output.dds] [unpacked_output.png]\n\n");
+	fprintf(stderr, "By default, this tool compresses to BC7. A DX10 DDS file and a unpacked PNG file will be written to the source\ndirectory with the .dds/_unpacked.png/_unpacked_alpha.png suffixes.\n");
+	fprintf(stderr, "This tool does not yet support generating mipmaps (yet).\n");
+	fprintf(stderr, "\nUsage: bc7enc [-apng_filename] [options] input_filename.png [compressed_output.dds] [unpacked_output.png]\n\n");
 	fprintf(stderr, "-apng_filename Load G channel of PNG file into alpha channel of source image\n");
 	fprintf(stderr, "-g Don't write unpacked output PNG files (this disables PSNR metrics too).\n");
 	fprintf(stderr, "-y Flip source image along Y axis before packing\n");
@@ -41,39 +44,46 @@ static int print_usage()
 	fprintf(stderr, "-Y# BC4/5: Set second color channel (defaults to 1 or green)\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "-l BC7: Use linear colorspace metrics instead of perceptual (the default is perceptual or sRGB!). BC7 RDO mode is always linear.\n");
-	fprintf(stderr, "-uX BC7: Higher quality levels, X ranges from [0,4] for BC7\n");
+	fprintf(stderr, "-uX BC7: Higher BC7 quality levels, X ranges from [0,4] for BC7. Default is 4.\n");
 	fprintf(stderr, "-pX BC7: Scan X partitions in mode 1, X ranges from [0,64], use 0 to disable mode 1 entirely (faster)\n");
-	fprintf(stderr, "-LX BC1: Set encoding level, where 0=fastest and 18=slowest but highest quality\n");
-	fprintf(stderr, "\nRDO mode options:\n");
-	fprintf(stderr, "-z# BC1-7: Set RDO lambda factor (quality), lower=higher quality/larger LZ compressed files, try .1-4\n");
-	fprintf(stderr, "-zb# BC1-7: Manually set smooth block scale factor, higher values = less distortion on smooth blocks, try 5-70\n");
-	fprintf(stderr, "-zc# BC1: Set RDO lookback window size in bytes (higher=more effective but slower, default=256 for BC7 and 1024 for BC1-5, try 128-8192)\n");
+	fprintf(stderr, "-LX BC1: Set encoding level, where 0=fastest and 18=slowest but highest quality. Default is 18.\n");
+	fprintf(stderr, "\nBC3-5 alpha block encoding options:\n");
+	fprintf(stderr, "-hl BC3-5: Use lower quality BC4 block encoder (much faster, but lower quality, only uses 8 value mode)\n");
+	fprintf(stderr, "-h6 BC3-5: Use 6 value mode only for BC4 blocks\n");
+	fprintf(stderr, "-h8 BC3-5: Use 8 value mode only for BC4 blocks\n");
+	fprintf(stderr, "-hr# BC3-5: Set search radius, default is 5, larger=higher quality but slower compression\n");
+	fprintf(stderr, "\nRDO encoding options:\n");
 	fprintf(stderr, "-e BC7: Quantize/weight BC7 output for lower entropy (no slowdown but only 5-10%% gains, can be combined with -z# for more gains)\n");
+	fprintf(stderr, "-z# BC1-7: Set RDO lambda factor (quality), lower=higher quality/larger LZ compressed files, try .1-4, combine with -e for BC7 for more gains\n");
+	fprintf(stderr, "-zb# BC1-7: Manually set smooth block scale factor, higher values = less distortion on smooth blocks, try 5-70\n");
+	fprintf(stderr, "-zc# BC1: Set RDO lookback window size in bytes (higher=more effective but slower, default=128, try 64-16384)\n");
+	fprintf(stderr, "-zm BC1-7: Allow byte sequences to be moved inside blocks (much slower)\n");
 	fprintf(stderr, "RDO debugging/development:\n");
 	fprintf(stderr, "-zd BC1-7: Enable debug output\n");
-	fprintf(stderr, "-zr BC1: Disable RDO endpoint/selector refinement stages (lowers quality)\n");
-	fprintf(stderr, "-zs BC1: Disable selector RDO (lowers avg quality per output bit)\n");
-	fprintf(stderr, "-ze BC1: Disable endpoint RDO (lowers avg quality per output bit)\n");
+	fprintf(stderr, "-zt BC1-7: Disable RDO multithreading\n");
 	fprintf(stderr, "\n");
-	fprintf(stderr, "-b BC1: Enable 3-color mode for blocks containing black or very dark pixels. (Important: engine/shader MUST ignore decoded texture alpha if this flag is enabled!)\n");
-	fprintf(stderr, "-c BC1: Disable 3-color mode for solid color blocks\n");
+	fprintf(stderr, "-b BC1: Don't use 3-color mode transparent texels on blocks containing black or very dark pixels. By default this mode is now enabled.\n");
+	fprintf(stderr, "-c BC1: Disable 3-color mode\n");
 	fprintf(stderr, "-n BC1: Encode/decode for NVidia GPU's\n");
 	fprintf(stderr, "-m BC1: Encode/decode for AMD GPU's\n");
 	fprintf(stderr, "-r BC1: Encode/decode using ideal BC1 formulas with rounding for 4-color block colors 2,3 (same as AMD Compressonator)\n");
 	fprintf(stderr, "-f Force writing DX10-style DDS files (otherwise for BC1-5 it uses DX9-style DDS files)\n");
 	fprintf(stderr, "\nBy default, this tool encodes to BC1 *without rounding* 4-color block colors 2,3, which may not match the output of some software decoders.\n");
 	fprintf(stderr, "\nFor BC4 and BC5: Not all tools support reading DX9-style BC4/BC5 format files (or BC4/5 files at all). AMD Compressonator does.\n");
-	fprintf(stderr, "\nReduced entropy/RDO examples:\n");
-	fprintf(stderr, "\n\"bc7enc -o -u4 -e blah.png\" - Reduced entropy BC7 encoding (fast, but only 5-10%% gains)\n");
-	fprintf(stderr, "\"bc7enc -o -u4 -z1.0 -zc256 blah.png\" - RDO BC7 with lambda 1.0, window size 256 bytes\n");
-	fprintf(stderr, "\"bc7enc -o -u4 -z1.0 -e -zc256 blah.png\" - RDO BC7 with lambda 1.0, window size 256 bytes, combined with reduced entropy BC7\n");
-	fprintf(stderr, "\"bc7enc -o -1 -L18 -z1.0 blah.png\" - RDO BC1 with lambda 1.0\n");
+	fprintf(stderr, "\nFor BC1, the engine/shader must ignore decoded texture alpha because the encoder utilizes transparent texel to get black/dark texels. Use -b to disable.\n");
+	fprintf(stderr, "\nReduced entropy/RDO encoding examples:\n");
+	fprintf(stderr, "\n\"bc7enc -o -e blah.png\" - Reduced entropy BC7 encoding (fast, but only 5-10%% gains)\n");
+	fprintf(stderr, "\"bc7enc -o -z1.0 -zc256 blah.png\" - RDO BC7 with lambda 1.0, window size 256 bytes (default window is only 128)\n");
+	fprintf(stderr, "\"bc7enc -o -z1.0 -e -zc1024 blah.png\" - RDO BC7 with lambda 1.0, window size 1024 bytes for more gains (but slower), combined with reduced entropy BC7\n");
+	fprintf(stderr, "\"bc7enc -o -1 -z1.0 blah.png\" - RDO BC1 with lambda 1.0\n");
 			
 	return EXIT_FAILURE;
 }
 
 int main(int argc, char *argv[])
 {
+	printf("bc7enc v%s - RDO BC1-7 Texture Compressor\n", BC7ENC_VERSION);
+
 	if (argc < 2)
 		return print_usage();
 
@@ -83,16 +93,12 @@ int main(int argc, char *argv[])
 #endif
 	printf("Max threads: %u\n", max_threads);
 
-	std::string src_filename;
-	std::string src_alpha_filename;
-	std::string dds_output_filename;
-	std::string png_output_filename;
-	std::string png_alpha_output_filename;
+	std::string src_filename, src_alpha_filename, dds_output_filename, png_output_filename, png_alpha_output_filename;
 
 	bool no_output_png = false;
 	bool out_cur_dir = false;
 
-	int uber_level = 0;
+	int bc7_uber_level = BC7ENC_MAX_UBER_LEVEL;
 	int max_partitions_to_scan = BC7ENC_MAX_PARTITIONS;
 	bool perceptual = true;
 	bool y_flip = false;
@@ -101,30 +107,30 @@ int main(int argc, char *argv[])
 	
 	rgbcx::bc1_approx_mode bc1_mode = rgbcx::bc1_approx_mode::cBC1Ideal;
 	bool use_bc1_3color_mode = true;
-	bool use_bc1_3color_mode_for_black = false;
-	int bc1_quality_level = 10;
+	
+	// We're just turning this on by default now, like NVDXT.EXE used to do back in the old original Xbox days.
+	bool use_bc1_3color_mode_for_black = true; // false; 
+
+	int bc1_quality_level = rgbcx::MAX_LEVEL;
 
 	DXGI_FORMAT dxgi_format = DXGI_FORMAT_BC7_UNORM;
 	uint32_t pixel_format_bpp = 8;
 	bool force_dx10_dds = false;
 
-	float rdo_q = 0.0f, rdo_q_alpha = 0.0f;
-	bool rdo_refinement = true;
-	bool selector_rdo = true;
-	bool endpoint_rdo = true;
+	float rdo_q = 0.0f;
 	bool rdo_debug_output = false;
-	float rdo_smooth_block_error_scale = rgbcx::BC1_RDO_DEFAULT_SMOOTH_BLOCK_ERROR_SCALE;
-	float rdo_alpha_smooth_block_error_scale = rgbcx::BC4_RDO_DEFAULT_SMOOTH_BLOCK_ERROR_SCALE;
+	float rdo_smooth_block_error_scale = 15.0f;
 	bool custom_rdo_smooth_block_error_scale = false;
-	uint32_t m_lookback_window_size = 256;
+	uint32_t m_lookback_window_size = 128;
 	bool custom_lookback_window_size = false;
 	bool rdo_bc7_quant_mode6_endpoints = true;
 	bool rdo_bc7_weight_modes = true;
 	bool rdo_bc7_weight_low_frequency_partitions = true;
 	bool rdo_bc7_pbit1_weighting = true;
 	float rdo_max_smooth_block_std_dev = 18.0f;
+	bool rdo_allow_relative_movement = false;
 	
-	bool use_hq_bc345 = false;
+	bool use_hq_bc345 = true;
 	int bc345_search_rad = 5;
 	uint32_t bc345_mode_mask = rgbcx::BC4_USE_ALL_MODES;
 
@@ -149,7 +155,9 @@ int main(int argc, char *argv[])
 				}
 				case 'h':
 				{
-					if (strcmp(pArg, "-h6") == 0)
+					if (strcmp(pArg, "-hl") == 0)
+						use_hq_bc345 = false;
+					else if (strcmp(pArg, "-h6") == 0)
 						bc345_mode_mask = rgbcx::BC4_USE_MODE6_FLAG;
 					else if (strcmp(pArg, "-h8") == 0)
 						bc345_mode_mask = rgbcx::BC4_USE_MODE8_FLAG;
@@ -158,8 +166,7 @@ int main(int argc, char *argv[])
 						bc345_search_rad = atoi(pArg + 3);
 						bc345_search_rad = std::max(0, std::min(32, bc345_search_rad));
 					}
-					else
-						use_hq_bc345 = true;
+											
 					break;
 				}
 				case '6':
@@ -232,8 +239,8 @@ int main(int argc, char *argv[])
 				}
 				case 'u':
 				{
-					uber_level = atoi(pArg + 2);
-					if ((uber_level < 0) || (uber_level > MAX_UBER_LEVEL))
+					bc7_uber_level = atoi(pArg + 2);
+					if ((bc7_uber_level < 0) || (bc7_uber_level > BC7ENC_MAX_UBER_LEVEL))
 					{
 						fprintf(stderr, "Invalid argument: %s\n", pArg);
 						return EXIT_FAILURE;
@@ -293,18 +300,6 @@ int main(int argc, char *argv[])
 					{
 						rdo_multithreading = false;
 					}
-					else if (strncmp(pArg, "-zr", 3) == 0)
-					{
-						rdo_refinement = false;
-					}
-					else if (strncmp(pArg, "-zs", 3) == 0)
-					{
-						selector_rdo = false;
-					}
-					else if (strncmp(pArg, "-ze", 3) == 0)
-					{
-						endpoint_rdo = false;
-					}
 					else if (strncmp(pArg, "-zd", 3) == 0)
 					{
 						rdo_debug_output = true;
@@ -325,21 +320,15 @@ int main(int argc, char *argv[])
 					{
 						rdo_bc7_pbit1_weighting = false;
 					}
+					else if (strncmp(pArg, "-zm", 3) == 0)
+					{
+						rdo_allow_relative_movement = true;
+					}
 					else if (strncmp(pArg, "-zb", 3) == 0)
 					{
 						rdo_smooth_block_error_scale = (float)atof(pArg + 3);
 						rdo_smooth_block_error_scale = std::min<float>(std::max<float>(rdo_smooth_block_error_scale, 1.0f), 500.0f);
 						custom_rdo_smooth_block_error_scale = true;
-					}
-					else if (strncmp(pArg, "-zba", 4) == 0)
-					{
-						rdo_alpha_smooth_block_error_scale = (float)atof(pArg + 4);
-						rdo_alpha_smooth_block_error_scale = std::min<float>(std::max<float>(rdo_alpha_smooth_block_error_scale, 1.0f), 500.0f);
-					}
-					else if (strncmp(pArg, "-za", 3) == 0)
-					{
-						rdo_q_alpha = (float)atof(pArg + 3);
-						rdo_q_alpha = std::min<float>(std::max<float>(rdo_q_alpha, 32), 65536 * 2);
 					}
 					else if (strncmp(pArg, "-zc", 3) == 0)
 					{
@@ -366,7 +355,7 @@ int main(int argc, char *argv[])
 				}
 				case 'b':
 				{
-					use_bc1_3color_mode_for_black = true;
+					use_bc1_3color_mode_for_black = false;
 					break;
 				}
 				case 'c':
@@ -523,7 +512,7 @@ int main(int argc, char *argv[])
 	if (!perceptual)
 		bc7enc_compress_block_params_init_linear_weights(&bc7_pack_params);
 	bc7_pack_params.m_max_partitions = max_partitions_to_scan;
-	bc7_pack_params.m_uber_level = std::min(BC7ENC_MAX_UBER_LEVEL, uber_level);
+	bc7_pack_params.m_uber_level = std::min(BC7ENC_MAX_UBER_LEVEL, bc7_uber_level);
 				
 	if (bc7_mode6_only)
 		bc7_pack_params.m_mode_mask = 1 << 6;
@@ -584,15 +573,21 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
+#if 0
 		if (!custom_lookback_window_size)
 		{
 			// Use a better default for BC1. 
 			m_lookback_window_size = 1024;
 		}
+#endif
 
-		printf("BC1 level: %u, use 3-color mode: %u, use 3-color mode for black: %u, bc1_mode: %u\nrdo_q: %f, rdo_q_alpha: %f, rdo_refinement: %u, selector_rdo: %u, endpoint_rdo: %u\nm_lookback_window_size: %u, rdo_smooth_block_error_scale: %f, rdo_alpha_smooth_block_error_scale: %f\n", 
-			bc1_quality_level, use_bc1_3color_mode, use_bc1_3color_mode_for_black, (int)bc1_mode, rdo_q, rdo_q_alpha, rdo_refinement, selector_rdo, endpoint_rdo, m_lookback_window_size, rdo_smooth_block_error_scale, rdo_alpha_smooth_block_error_scale);
+		printf("BC1 level: %u, use 3-color mode: %u, use 3-color mode for black: %u, bc1_mode: %u\nrdo_q: %f\nm_lookback_window_size: %u, rdo_smooth_block_error_scale: %f\n", 
+			bc1_quality_level, use_bc1_3color_mode, use_bc1_3color_mode_for_black, (int)bc1_mode, rdo_q, m_lookback_window_size, rdo_smooth_block_error_scale);
 	}
+
+	if ((dxgi_format == DXGI_FORMAT_BC3_UNORM) || (dxgi_format == DXGI_FORMAT_BC4_UNORM) || (dxgi_format == DXGI_FORMAT_BC5_UNORM))
+		printf("Use high quality BC4 block encoder: %u, BC4 block radius: %u, use 6 value mode: %u, use 8 value mode: %u\n",
+			use_hq_bc345, bc345_search_rad, (bc345_mode_mask & 2) != 0, (bc345_mode_mask & 1) != 0);
 
 	// Compress all the blocks to BC1-7
 	bc7enc_compress_block_init();
@@ -715,7 +710,7 @@ int main(int argc, char *argv[])
 	if (rdo_q > 0.0f)
 	{
 		const uint32_t MIN_RDO_MULTITHREADING_BLOCKS = 4096;
-		const int rdo_total_threads = rdo_multithreading ? max_threads : 1;
+		const int rdo_total_threads = (rdo_multithreading && (max_threads > 1) && (total_blocks >= MIN_RDO_MULTITHREADING_BLOCKS)) ? max_threads : 1;
 		
 		printf("rdo_total_threads: %u\n", rdo_total_threads);
 		
@@ -734,180 +729,394 @@ int main(int argc, char *argv[])
 
 		assert(!blocks_remaining && cur_block_index == (int)total_blocks);
 
+		ert::reduce_entropy_params ert_p;
+
+		ert_p.m_lambda = rdo_q;
+		ert_p.m_lookback_window_size = m_lookback_window_size;
+		ert_p.m_smooth_block_max_mse_scale = rdo_smooth_block_error_scale;
+		ert_p.m_max_smooth_block_std_dev = rdo_max_smooth_block_std_dev;
+		ert_p.m_debug_output = rdo_debug_output;
+		ert_p.m_allow_relative_movement = rdo_allow_relative_movement;
+		ert_p.m_skip_zero_mse_blocks = false;
+
+		std::vector<rgbcx::color32> block_pixels(total_blocks * 16);
+
+		for (uint32_t by = 0; by < blocks_y; by++)
+			for (uint32_t bx = 0; bx < blocks_x; bx++)
+				source_image.get_block(bx, by, 4, 4, (color_quad_u8*)&block_pixels[(bx + by * blocks_x) * 16]);
+
+		struct unpacker_funcs
+		{
+			rgbcx::bc1_approx_mode m_mode;
+			bool m_allow_3color_mode;
+			bool m_use_bc1_3color_mode_for_black;
+
+			static bool unpack_bc1_block(const void* pBlock, ert::color_rgba* pPixels, void* pUser_data)
+			{
+				const unpacker_funcs* pState = (const unpacker_funcs*)pUser_data;
+								
+				bool used_3color_mode = rgbcx::unpack_bc1(pBlock, pPixels, true, pState->m_mode);
+
+				if (used_3color_mode)
+				{
+					if (!pState->m_allow_3color_mode)
+						return false;
+
+					if (!pState->m_use_bc1_3color_mode_for_black)
+					{
+						rgbcx::bc1_block* pBC1_block = (rgbcx::bc1_block*)pBlock;
+
+						for (uint32_t y = 0; y < 4; y++)
+						{
+							for (uint32_t x = 0; x < 4; x++)
+							{
+								if (pBC1_block->get_selector(x, y) == 3)
+									return false;
+							} // x
+						} // y
+					}
+				}
+
+				return true;
+			}
+
+			static bool unpack_bc4_block(const void* pBlock, ert::color_rgba* pPixels, void* pUser_data)
+			{
+				(void)pUser_data;
+				memset(pPixels, 0, sizeof(ert::color_rgba) * 16);
+				rgbcx::unpack_bc4(pBlock, (uint8_t*)pPixels, 4);
+				return true;
+			}
+
+			static bool unpack_bc7_block(const void* pBlock, ert::color_rgba* pPixels, void* pUser_data)
+			{
+				(void)pUser_data;
+				bc7decomp::unpack_bc7(pBlock, (bc7decomp::color_rgba*)pPixels);
+				return true;
+			}
+		};
+
+		unpacker_funcs block_unpackers;
+		block_unpackers.m_allow_3color_mode = use_bc1_3color_mode;
+		block_unpackers.m_use_bc1_3color_mode_for_black = use_bc1_3color_mode_for_black;
+		block_unpackers.m_mode = bc1_mode;
+
 		if (dxgi_format == DXGI_FORMAT_BC7_UNORM)
 		{
-			bc7enc_rdo_params bc7_rdo_p;
-
-			bc7_rdo_p.m_lambda = rdo_q;
-			bc7_rdo_p.m_lookback_window_size = m_lookback_window_size;
-			bc7_rdo_p.m_smooth_block_max_mse_scale = rdo_smooth_block_error_scale;
-			bc7_rdo_p.m_max_smooth_block_std_dev = rdo_max_smooth_block_std_dev;
-			bc7_rdo_p.m_debug_output = rdo_debug_output;
+			// BC7 RDO
+			const uint32_t NUM_COMPONENTS = 4;
 
 			if (!custom_rdo_smooth_block_error_scale)
 			{
 				// Attempt to compute a decent conservative smooth block MSE max scaling factor.
 				// No single smooth block scale setting can work for all textures (unless it's ridiuclously large, killing efficiency).
-				bc7_rdo_p.m_smooth_block_max_mse_scale = lerp(15.0f, 50.0f, std::min(1.0f, bc7_rdo_p.m_lambda / 4.0f));
+				ert_p.m_smooth_block_max_mse_scale = lerp(15.0f, 50.0f, std::min(1.0f, ert_p.m_lambda / 4.0f));
 
-				printf("Using an automatically computed smooth block error scale of %f\n", bc7_rdo_p.m_smooth_block_max_mse_scale);
+				printf("Using an automatically computed smooth block error scale of %f\n", ert_p.m_smooth_block_max_mse_scale);
 			}
-
-			std::vector<rgbcx::color32> block_pixels(total_blocks * 16);
-
-			for (uint32_t by = 0; by < blocks_y; by++)
-				for (uint32_t bx = 0; bx < blocks_x; bx++)
-					source_image.get_block(bx, by, 4, 4, (color_quad_u8*)&block_pixels[(bx + by * blocks_x) * 16]);
-
-			bc7_rdo_p.print();
-
-			clock_t rdo_start_t = clock();
-						
+			
+			printf("\nERT parameters:\n");
+			ert_p.print();
+			printf("\n");
+			
 			uint32_t total_modified = 0;
 
-			if ((rdo_multithreading) && (rdo_total_threads > 1) && (total_blocks >= MIN_RDO_MULTITHREADING_BLOCKS))
-			{
+			clock_t rdo_start_t = clock();
+												
 #pragma omp parallel for
-				for (int p = 0; p < rdo_total_threads; p++)
-				{
-					const int first_block_to_encode = first_block_index[p];
-					const int blocks_to_encode = blocks_to_do[p];
-					if (!blocks_to_encode)
-						continue;
+			for (int p = 0; p < rdo_total_threads; p++)
+			{
+				const int first_block_to_encode = first_block_index[p];
+				const int num_blocks_to_encode = blocks_to_do[p];
+				if (!num_blocks_to_encode)
+					continue;
 
-					uint32_t total_modified_local = 0;
-					bool status = bc7enc_reduce_entropy(&packed_image16[first_block_to_encode], blocks_to_encode, (color_rgba*)&block_pixels[16 * first_block_to_encode], bc7_rdo_p, total_modified_local);
+				uint32_t total_modified_local = 0;
+										
+				ert::reduce_entropy(&packed_image16[first_block_to_encode], num_blocks_to_encode,
+					16, 16, 4, 4, NUM_COMPONENTS,
+					(ert::color_rgba*)&block_pixels[16 * first_block_to_encode], ert_p, total_modified_local,
+					unpacker_funcs::unpack_bc7_block, &block_unpackers);
 
 #pragma omp critical
-					{
-						total_modified += total_modified_local;
-					}
-
-					if (!status)
-					{
-						fprintf(stderr, "bc7enc_reduce_entropy() failed!\n");
-						exit(EXIT_FAILURE);
-					}
-				} // p
-			}
-			else
-			{
-				bool status = bc7enc_reduce_entropy(&packed_image16[0], total_blocks, (color_rgba*)&block_pixels[0], bc7_rdo_p, total_modified);
-				if (!status)
 				{
-					fprintf(stderr, "bc7enc_reduce_entropy() failed!\n");
-					exit(EXIT_FAILURE);
+					total_modified += total_modified_local;
+				}
+			} // p
+			
+			clock_t rdo_end_t = clock();
+
+			printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
+
+			printf("Total blocks modified: %u %3.2f%%\n", total_modified, total_modified * 100.0f / total_blocks);
+		}
+		else if (dxgi_format == DXGI_FORMAT_BC5_UNORM)
+		{
+			// BC5 RDO - One BC4 block for R followed by one BC4 block for G
+
+			std::vector<rgbcx::color32> block_pixels_r(total_blocks * 16), block_pixels_g(total_blocks * 16);
+
+			for (uint32_t by = 0; by < blocks_y; by++)
+			{
+				for (uint32_t bx = 0; bx < blocks_x; bx++)
+				{
+					color_quad_u8 orig_block[16];
+					source_image.get_block(bx, by, 4, 4, orig_block);
+
+					color_quad_u8* pDst_block_r = (color_quad_u8*)&block_pixels_r[(bx + by * blocks_x) * 16];
+					color_quad_u8* pDst_block_g = (color_quad_u8*)&block_pixels_g[(bx + by * blocks_x) * 16];
+
+					for (uint32_t i = 0; i < 16; i++)
+					{
+						pDst_block_r[i].set(orig_block[i].r(), 0, 0, 0);
+						pDst_block_g[i].set(orig_block[i].g(), 0, 0, 0);
+					}
 				}
 			}
 
-			printf("Total modified blocks: %u %3.2f%%\n", total_modified, total_modified * 100.0f / total_blocks);
+			const uint32_t NUM_COMPONENTS = 1;
 
-			clock_t rdo_end_t = clock();
-
-			printf("Total RDO postprocess time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
-		}
-		else if (dxgi_format == DXGI_FORMAT_BC4_UNORM)
-		{
-			if (rdo_q_alpha > 0.0f)
-			{
-				rgbcx::bc4_rdo_params bc4_rdo_p;
-				bc4_rdo_p.m_langrangian_multiplier = rdo_q_alpha;
-				bc4_rdo_p.m_refine_endpoints = rdo_refinement;
-				bc4_rdo_p.m_refine_selectors = rdo_refinement;
-				bc4_rdo_p.m_debug_output = rdo_debug_output;
-				bc4_rdo_p.m_lz_dict_size = m_lookback_window_size;
-				bc4_rdo_p.m_smooth_block_error_scale = rdo_alpha_smooth_block_error_scale;
-				bc4_rdo_p.m_block_max_std_dev_rdo_quality_scaler = rdo_max_smooth_block_std_dev;
-
-				std::vector<rgbcx::color32> block_pixels(total_blocks * 16);
-
-				for (uint32_t by = 0; by < blocks_y; by++)
-					for (uint32_t bx = 0; bx < blocks_x; bx++)
-						source_image.get_block(bx, by, 4, 4, (color_quad_u8*)&block_pixels[(bx + by * blocks_x) * 16]);
-
-				uint32_t total_skipped = 0, total_endpoints_refined = 0, total_selectors_refined = 0, total_merged = 0;
-
-				bc4_rdo_postprocess((rgbcx::bc4_block*)&packed_image8[0], 1, total_blocks, &block_pixels[0], bc45_channel0, bc4_rdo_p, total_skipped, total_endpoints_refined, total_selectors_refined, total_merged);
-
-				printf("Total blocks skipped: %u %3.2f%%, Total blocks merged: %u %3.2f%%, Total block endpoint refined: %u %3.2f%%, Total block selectors refined: %u %3.2f%%\n",
-					total_skipped, total_skipped * 100.0f / total_blocks,
-					total_merged, total_merged * 100.0f / total_blocks,
-					total_endpoints_refined, total_endpoints_refined * 100.0f / total_blocks,
-					total_selectors_refined, total_selectors_refined * 100.0f / total_blocks);
-
-				printf("\n");
-			}
-		}
-		else if (dxgi_format == DXGI_FORMAT_BC1_UNORM)
-		{
-			rgbcx::bc1_rdo_params bc1_rdo_p;
-			bc1_rdo_p.m_langrangian_multiplier = rdo_q;
-			bc1_rdo_p.m_use_transparent_texels_for_black = use_bc1_3color_mode_for_black;
-			bc1_rdo_p.m_mode = bc1_mode;
-			bc1_rdo_p.m_level = bc1_quality_level;
-			bc1_rdo_p.m_refine_endpoints = rdo_refinement;
-			bc1_rdo_p.m_refine_selectors = rdo_refinement;
-			bc1_rdo_p.m_debug_output = rdo_debug_output;
-			bc1_rdo_p.m_lz_dict_size = m_lookback_window_size;
-			bc1_rdo_p.m_smooth_block_error_scale = rdo_smooth_block_error_scale;
-			bc1_rdo_p.m_block_max_std_dev_rdo_quality_scaler = rdo_max_smooth_block_std_dev;
+			ert_p.m_color_weights[1] = 0;
+			ert_p.m_color_weights[2] = 0;
+			ert_p.m_color_weights[3] = 0;
 
 			if (!custom_rdo_smooth_block_error_scale)
 			{
-				// This is just a hack - no single setting can work for all textures.
-				bc1_rdo_p.m_smooth_block_error_scale = lerp(8.0f, 30.0f, std::min(1.0f, bc1_rdo_p.m_langrangian_multiplier / 10.0f));
-				printf("Using an automatically computed smooth block error scale of %f (use -zb to override)\n", bc1_rdo_p.m_smooth_block_error_scale);
+				// Attempt to compute a decent conservative smooth block MSE max scaling factor.
+				// No single smooth block scale setting can work for all textures (unless it's ridiuclously large, killing efficiency).
+				ert_p.m_smooth_block_max_mse_scale = lerp(10.0f, 30.0f, std::min(1.0f, ert_p.m_lambda / 4.0f));
+
+				printf("Using an automatically computed smooth block error scale of %f\n", ert_p.m_smooth_block_max_mse_scale);
 			}
 
-			std::vector<rgbcx::color32> block_pixels(total_blocks * 16);
+			printf("\nERT parameters:\n");
+			ert_p.print();
+			printf("\n");
+
+			uint32_t total_modified_r = 0, total_modified_g = 0;
+						
+			clock_t rdo_start_t = clock();
+
+#pragma omp parallel for
+			for (int p = 0; p < rdo_total_threads; p++)
+			{
+				const int first_block_to_encode = first_block_index[p];
+				const int num_blocks_to_encode = blocks_to_do[p];
+				if (!num_blocks_to_encode)
+					continue;
+
+				uint32_t total_modified_local_r = 0, total_modified_local_g = 0;
+
+				ert::reduce_entropy(&packed_image16[first_block_to_encode], num_blocks_to_encode,
+					2 * sizeof(rgbcx::bc4_block), sizeof(rgbcx::bc4_block), 4, 4, NUM_COMPONENTS,
+					(ert::color_rgba*)&block_pixels_r[16 * first_block_to_encode], ert_p, total_modified_local_r,
+					unpacker_funcs::unpack_bc4_block, &block_unpackers);
+
+				ert::reduce_entropy((uint8_t*)&packed_image16[first_block_to_encode] + sizeof(rgbcx::bc4_block), num_blocks_to_encode,
+					2 * sizeof(rgbcx::bc4_block), sizeof(rgbcx::bc4_block), 4, 4, NUM_COMPONENTS,
+					(ert::color_rgba*)&block_pixels_g[16 * first_block_to_encode], ert_p, total_modified_local_g,
+					unpacker_funcs::unpack_bc4_block, &block_unpackers);
+
+#pragma omp critical
+				{
+					total_modified_r += total_modified_local_r;
+					total_modified_g += total_modified_local_g;
+				}
+			} // p
+
+			clock_t rdo_end_t = clock();
+
+			printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
+
+			printf("Total blocks modified R: %u %3.2f%%\n", total_modified_r, total_modified_r * 100.0f / total_blocks);
+			printf("Total blocks modified G: %u %3.2f%%\n", total_modified_g, total_modified_g * 100.0f / total_blocks);
+		}
+		else if (dxgi_format == DXGI_FORMAT_BC4_UNORM) 
+		{
+			// BC4 RDO - One BC4 block for R
+
+			const uint32_t NUM_COMPONENTS = 1;
+
+			ert_p.m_color_weights[1] = 0;
+			ert_p.m_color_weights[2] = 0;
+			ert_p.m_color_weights[3] = 0;
+
+			if (!custom_rdo_smooth_block_error_scale)
+			{
+				// Attempt to compute a decent conservative smooth block MSE max scaling factor.
+				// No single smooth block scale setting can work for all textures (unless it's ridiuclously large, killing efficiency).
+				ert_p.m_smooth_block_max_mse_scale = lerp(10.0f, 30.0f, std::min(1.0f, ert_p.m_lambda / 4.0f));
+
+				printf("Using an automatically computed smooth block error scale of %f\n", ert_p.m_smooth_block_max_mse_scale);
+			}
+
+			printf("\nERT parameters:\n");
+			ert_p.print();
+			printf("\n");
+
+			uint32_t total_modified = 0;
+						
+			clock_t rdo_start_t = clock();
+						
+#pragma omp parallel for
+			for (int p = 0; p < rdo_total_threads; p++)
+			{
+				const int first_block_to_encode = first_block_index[p];
+				const int num_blocks_to_encode = blocks_to_do[p];
+				if (!num_blocks_to_encode)
+					continue;
+
+				uint32_t total_modified_local = 0;
+
+				ert::reduce_entropy(&packed_image8[first_block_to_encode], num_blocks_to_encode,
+					sizeof(rgbcx::bc4_block), sizeof(rgbcx::bc4_block), 4, 4, NUM_COMPONENTS,
+					(ert::color_rgba*)&block_pixels[16 * first_block_to_encode], ert_p, total_modified_local,
+					unpacker_funcs::unpack_bc4_block, &block_unpackers);
+
+#pragma omp critical
+				{
+					total_modified += total_modified_local;
+				}
+			} // p
+
+			clock_t rdo_end_t = clock();
+
+			printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
+
+			printf("Total blocks modified: %u %3.2f%%\n", total_modified, total_modified * 100.0f / total_blocks);
+		}
+		else if (dxgi_format == DXGI_FORMAT_BC1_UNORM)
+		{
+			// BC1 RDO - One BC1 block
+			const uint32_t NUM_COMPONENTS = 3;
+
+			ert_p.m_color_weights[3] = 0;
+						
+			if (!custom_rdo_smooth_block_error_scale)
+			{
+				// This is just a hack - no single setting can work for all textures.
+				ert_p.m_smooth_block_max_mse_scale = lerp(15.0f, 50.0f, std::min(1.0f, ert_p.m_lambda / 8.0f));
+				printf("Using an automatically computed smooth block error scale of %f (use -zb to override)\n", ert_p.m_smooth_block_max_mse_scale);
+			}
+
+			printf("\nERT parameters:\n");
+			ert_p.print();
+			printf("\n");
+
+			uint32_t total_modified = 0;
+						
+			clock_t rdo_start_t = clock();
+						
+#pragma omp parallel for
+			for (int p = 0; p < rdo_total_threads; p++)
+			{
+				const int first_block_to_encode = first_block_index[p];
+				const int num_blocks_to_encode = blocks_to_do[p];
+				if (!num_blocks_to_encode)
+					continue;
+
+				uint32_t total_modified_local = 0;
+					
+				ert::reduce_entropy(&packed_image8[first_block_to_encode], num_blocks_to_encode,
+					sizeof(rgbcx::bc1_block), sizeof(rgbcx::bc1_block), 4, 4, NUM_COMPONENTS,
+					(ert::color_rgba*)&block_pixels[16 * first_block_to_encode], ert_p, total_modified_local,
+					unpacker_funcs::unpack_bc1_block, &block_unpackers);
+					
+#pragma omp critical
+				{
+					total_modified += total_modified_local;
+				}
+			} // p
+
+			clock_t rdo_end_t = clock();
+
+			printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
+
+			printf("Total blocks modified: %u %3.2f%%\n",
+				total_modified, total_modified * 100.0f / total_blocks);
+		}
+		else if (dxgi_format == DXGI_FORMAT_BC3_UNORM)
+		{
+			// BC3 RDO - One BC4 block followed by one BC1 block
+			std::vector<rgbcx::color32> block_pixels_a(total_blocks * 16);
 
 			for (uint32_t by = 0; by < blocks_y; by++)
+			{
 				for (uint32_t bx = 0; bx < blocks_x; bx++)
-					source_image.get_block(bx, by, 4, 4, (color_quad_u8*)&block_pixels[(bx + by * blocks_x) * 16]);
+				{
+					color_quad_u8 orig_block[16];
+					source_image.get_block(bx, by, 4, 4, orig_block);
 
-			if (selector_rdo)
-			{
-				printf("--- Begin selector RDO post-process:\n");
-
-				uint32_t total_skipped = 0, total_endpoints_refined = 0, total_selectors_refined = 0, total_merged = 0;
-
-				clock_t rdo_start_t = clock();
-
-				bc1_rdo_postprocess((rgbcx::bc1_block*)&packed_image8[0], 1, total_blocks, &block_pixels[0], bc1_rdo_p, total_skipped, total_endpoints_refined, total_selectors_refined, total_merged, true);
-
-				clock_t rdo_end_t = clock();
-
-				printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
-
-				printf("Total blocks skipped: %u %3.2f%%, Total blocks merged: %u %3.2f%%, Total block endpoints refined: %u %3.2f%%, Total block selectors refined: %u %3.2f%%\n",
-					total_skipped, total_skipped * 100.0f / total_blocks,
-					total_merged, total_merged * 100.0f / total_blocks,
-					total_endpoints_refined, total_endpoints_refined * 100.0f / total_blocks,
-					total_selectors_refined, total_selectors_refined * 100.0f / total_blocks);
+					color_quad_u8* pDst_block_a = (color_quad_u8*)&block_pixels_a[(bx + by * blocks_x) * 16];
+					for (uint32_t i = 0; i < 16; i++)
+						pDst_block_a[i].set(orig_block[i].a(), 0, 0, 0);
+				}
 			}
 
-			if (endpoint_rdo)
+			ert_p.m_color_weights[3] = 0;
+
+			ert::reduce_entropy_params ert_alpha_p(ert_p);
+			ert_alpha_p.m_color_weights[1] = 0;
+			ert_alpha_p.m_color_weights[2] = 0;
+			ert_alpha_p.m_color_weights[3] = 0;
+						
+			if (!custom_rdo_smooth_block_error_scale)
 			{
-				printf("--- Begin endpoint RDO post-process:\n");
-
-				uint32_t total_skipped = 0, total_endpoints_refined = 0, total_selectors_refined = 0, total_merged = 0;
-
-				clock_t rdo_start_t = clock();
-
-				bc1_rdo_postprocess((rgbcx::bc1_block*)&packed_image8[0], 1, total_blocks, &block_pixels[0], bc1_rdo_p, total_skipped, total_endpoints_refined, total_selectors_refined, total_merged, false);
-
-				clock_t rdo_end_t = clock();
-
-				printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
-
-				printf("Total blocks skipped: %u %3.2f%%, Total blocks merged: %u %3.2f%%, Total block endpoints refined: %u %3.2f%%, Total block selectors refined: %u %3.2f%%\n",
-					total_skipped, total_skipped * 100.0f / total_blocks,
-					total_merged, total_merged * 100.0f / total_blocks,
-					total_endpoints_refined, total_endpoints_refined * 100.0f / total_blocks,
-					total_selectors_refined, total_selectors_refined * 100.0f / total_blocks);
+				// This is just a hack - no single setting can work for all textures.
+				ert_p.m_smooth_block_max_mse_scale = lerp(15.0f, 50.0f, std::min(1.0f, ert_p.m_lambda / 8.0f));
+				printf("Using an automatically computed smooth block error scale of %f (use -zb to override) for RGB\n", ert_p.m_smooth_block_max_mse_scale);
+				
+				ert_alpha_p.m_smooth_block_max_mse_scale = lerp(10.0f, 30.0f, std::min(1.0f, ert_alpha_p.m_lambda / 4.0f));
+				printf("Using an automatically computed smooth block error scale of %f (use -zb to override) for Alpha\n", ert_alpha_p.m_smooth_block_max_mse_scale);
 			}
 
+			printf("\nERT RGB parameters:\n");
+			ert_p.print();
+
+			printf("\nERT Alpha parameters:\n");
+			ert_alpha_p.print();
 			printf("\n");
+
+			uint32_t total_modified_rgb = 0, total_modified_alpha = 0;
+
+			block_unpackers.m_allow_3color_mode = false;
+			block_unpackers.m_use_bc1_3color_mode_for_black = false;
+						
+			clock_t rdo_start_t = clock();
+						
+#pragma omp parallel for
+			for (int p = 0; p < rdo_total_threads; p++)
+			{
+				const int first_block_to_encode = first_block_index[p];
+				const int num_blocks_to_encode = blocks_to_do[p];
+				if (!num_blocks_to_encode)
+					continue;
+
+				uint32_t total_modified_local_rgb = 0, total_modified_local_alpha = 0;
+					
+				ert::reduce_entropy((uint8_t*)&packed_image16[first_block_to_encode], num_blocks_to_encode,
+					sizeof(rgbcx::bc1_block) * 2, sizeof(rgbcx::bc4_block), 4, 4, 1,
+					(ert::color_rgba*)&block_pixels_a[16 * first_block_to_encode], ert_alpha_p, total_modified_local_alpha,
+					unpacker_funcs::unpack_bc4_block, &block_unpackers);
+
+				ert::reduce_entropy((uint8_t *)&packed_image16[first_block_to_encode] + sizeof(rgbcx::bc1_block), num_blocks_to_encode,
+					sizeof(rgbcx::bc1_block) * 2, sizeof(rgbcx::bc1_block), 4, 4, 3,
+					(ert::color_rgba*)&block_pixels[16 * first_block_to_encode], ert_p, total_modified_local_rgb,
+					unpacker_funcs::unpack_bc1_block, &block_unpackers);
+					
+#pragma omp critical
+				{
+					total_modified_rgb += total_modified_local_rgb;
+					total_modified_alpha += total_modified_local_alpha;
+				}
+			} // p
+			
+			clock_t rdo_end_t = clock();
+
+			printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
+
+			printf("Total RGB blocks modified: %u %3.2f%%\n", total_modified_rgb, total_modified_rgb * 100.0f / total_blocks);
+			printf("Total Alpha blocks modified: %u %3.2f%%\n", total_modified_alpha, total_modified_alpha * 100.0f / total_blocks);
 		}
 
 	} // if (rdo_q > 0.0f)
@@ -947,7 +1156,8 @@ int main(int argc, char *argv[])
 	{
 		image_u8 unpacked_image(source_image.width(), source_image.height());
 
-		bool punchthrough_flag = false;
+		bool bc1_punchthrough_flag = false;
+		bool used_bc1_transparent_texels_for_black = false;
 
 #pragma omp parallel for
 		for (int by = 0; by < (int)blocks_y; by++)
@@ -963,19 +1173,36 @@ int main(int argc, char *argv[])
 				switch (dxgi_format)
 				{
 				case DXGI_FORMAT_BC1_UNORM:
-					rgbcx::unpack_bc1(pBlock, unpacked_pixels, true, bc1_mode);
+				{
+					const bool used_punchthrough = rgbcx::unpack_bc1(pBlock, unpacked_pixels, true, bc1_mode);
+
+					if (used_punchthrough)
+					{
+						bc1_punchthrough_flag = true;
+
+						const rgbcx::bc1_block* pBC1_block = (const rgbcx::bc1_block*)pBlock;
+
+						for (uint32_t y = 0; y < 4; y++)
+							for (uint32_t x = 0; x < 4; x++)
+								if (pBC1_block->get_selector(x, y) == 3)
+									used_bc1_transparent_texels_for_black = true;
+					}
+
 					break;
+				}
 				case DXGI_FORMAT_BC3_UNORM:
 					if (!rgbcx::unpack_bc3(pBlock, unpacked_pixels, bc1_mode))
-						punchthrough_flag = true;
+						bc1_punchthrough_flag = true;
 					break;
 				case DXGI_FORMAT_BC4_UNORM:
 					rgbcx::unpack_bc4(pBlock, &unpacked_pixels[0][0], 4);
+#if DECODE_BC4_TO_GRAYSCALE
 					for (uint32_t i = 0; i < 16; i++)
 					{
 						unpacked_pixels[i][1] = unpacked_pixels[i][0];
 						unpacked_pixels[i][2] = unpacked_pixels[i][0];
 					}
+#endif
 					break;
 				case DXGI_FORMAT_BC5_UNORM:
 					rgbcx::unpack_bc5(pBlock, &unpacked_pixels[0][0], 0, 1, 4);
@@ -992,8 +1219,23 @@ int main(int argc, char *argv[])
 			} // bx
 		} // by
 
-		if ((punchthrough_flag) && (dxgi_format == DXGI_FORMAT_BC3_UNORM))
-			fprintf(stderr, "Warning: BC3 mode selected, but rgbcx::unpack_bc3() returned one or more blocks using 3-color mode!\n");
+		// Sanity check the BC1/BC3 output
+		if (dxgi_format == DXGI_FORMAT_BC3_UNORM)
+		{
+			if (bc1_punchthrough_flag)
+				fprintf(stderr, "WARNING: BC3 mode selected, but rgbcx::unpack_bc3() returned one or more blocks using 3-color mode!\n");
+		}
+		else if (dxgi_format == DXGI_FORMAT_BC1_UNORM)
+		{
+			if ((bc1_punchthrough_flag) && (!use_bc1_3color_mode))
+				fprintf(stderr, "WARNING: BC1 output used 3-color mode, when this was disabled!\n");
+
+			if ((used_bc1_transparent_texels_for_black) && (!used_bc1_transparent_texels_for_black))
+				fprintf(stderr, "WARNING: BC1 output used the transparent selector for black, when this was disabled!\n");
+		}
+
+		if ((dxgi_format == DXGI_FORMAT_BC1_UNORM) || (dxgi_format == DXGI_FORMAT_BC3_UNORM))
+			printf("Output used 3-color mode: %u, output used transparent texels for black: %u\n", bc1_punchthrough_flag, used_bc1_transparent_texels_for_black);
 
 		if ((dxgi_format != DXGI_FORMAT_BC4_UNORM) && (dxgi_format != DXGI_FORMAT_BC5_UNORM))
 		{
@@ -1090,6 +1332,29 @@ int main(int argc, char *argv[])
 		fclose(pCSV_file);
 		pCSV_file = nullptr;
 	}
+
+#if LZHAM_STATS
+	remove("__lzham_compressed");
+	char buf[1024];
+	sprintf(buf, "lzhamtest_x64 -x8 -o -e -h4 c \"%s\" __lzham_compressed", dds_output_filename.c_str());
+	system(buf);
+
+	{
+		FILE* p = fopen("__lzham_compressed", "rb");
+		if (p)
+		{
+			fseek(p, 0, SEEK_END);
+			uint32_t lzham_size = (uint32_t)ftell(p);
+			fclose(p);
+
+			float lzham_bits_per_texel = lzham_size * 8.0f / total_texels;
+
+			printf("LZHAM compressed file size: %u, %3.2f bits/texel\n",
+				(uint32_t)lzham_size,
+				lzham_bits_per_texel);
+		}
+	}
+#endif
 		
 	return failed ? EXIT_FAILURE : EXIT_SUCCESS;
 }

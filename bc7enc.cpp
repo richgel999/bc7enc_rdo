@@ -2539,6 +2539,9 @@ bool bc7enc_reduce_entropy(void* pBlocks, uint32_t num_blocks, const color_rgba*
 
 	const int total_blocks_to_check = std::max<uint32_t>(1U, params.m_lookback_window_size / sizeof(bc7_block));
 
+	uint32_t len_hist[17];
+	memset(len_hist, 0, sizeof(len_hist));
+
 	for (uint32_t block_index = 0; block_index < num_blocks; block_index++)
 	{
 		const bc7_block& orig_blk = pBC7_blocks[block_index];
@@ -2586,6 +2589,7 @@ bool bc7enc_reduce_entropy(void* pBlocks, uint32_t num_blocks, const color_rgba*
 
 		bc7_block best_block(orig_blk);
 		float best_t = cur_t;
+		uint32_t best_len = 0;
 
 		const float thresh_ms_err = params.m_max_allowed_rms_increase_ratio * params.m_max_allowed_rms_increase_ratio * cur_ms_err;
 
@@ -2636,6 +2640,7 @@ bool bc7enc_reduce_entropy(void* pBlocks, uint32_t num_blocks, const color_rgba*
 						{
 							best_t = t;
 							best_block = trial_blk;
+							best_len = len;
 						}
 					}
 				} // ofs
@@ -2648,9 +2653,18 @@ bool bc7enc_reduce_entropy(void* pBlocks, uint32_t num_blocks, const color_rgba*
 		{
 			pBC7_blocks[block_index] = best_block;
 			total_modified++;
+			len_hist[best_len]++;
 		}
 
 	} // block_index
+
+	if (params.m_debug_output)
+	{
+		printf("Match length historgram:\n");
+		for (uint32_t i = 1; i <= 16; i++)
+			printf("%u, ", len_hist[i]);
+		printf("\n");
+	}
 
 	return true;
 }

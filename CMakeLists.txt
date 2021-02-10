@@ -62,6 +62,8 @@ set (BC7ENC_SRC_LIST ${COMMON_SRC_LIST}
 	rgbcx.h
 	rgbcx_table4.h
 	rgbcx_table4_small.h
+	ert.cpp
+	ert.h
 	)
 	
 add_executable(bc7enc ${BC7ENC_SRC_LIST})
