@@ -5,9 +5,7 @@
 #include <memory.h>
 #include <assert.h>
 #include <limits.h>
-#include <unordered_map>
-#include <bitset>
-#include "bc7decomp.h"
+#include <algorithm>
 
 // Helpers
 static inline int32_t clampi(int32_t value, int32_t low, int32_t high) { if (value < low) value = low; else if (value > high) value = high;	return value; }
@@ -2531,148 +2529,10 @@ struct bc7_block
 	}
 };
 
-// BC7 entropy reduction transform
-bool bc7enc_reduce_entropy(void* pBlocks, uint32_t num_blocks, const color_rgba* pBlock_pixels, const bc7enc_rdo_params& params,	uint32_t& total_modified)
-{
-	const float LITERAL_BITS = 13.0f;
-	bc7_block* pBC7_blocks = static_cast<bc7_block*>(pBlocks);
-
-	const int total_blocks_to_check = std::max<uint32_t>(1U, params.m_lookback_window_size / sizeof(bc7_block));
-
-	uint32_t len_hist[17];
-	memset(len_hist, 0, sizeof(len_hist));
-
-	for (uint32_t block_index = 0; block_index < num_blocks; block_index++)
-	{
-		const bc7_block& orig_blk = pBC7_blocks[block_index];
-		const color_rgba* pPixels = &pBlock_pixels[16 * block_index];
-
-		color_rgba decoded_bc7_block[16];
-		if (!bc7decomp::unpack_bc7(&orig_blk, (bc7decomp::color_rgba*)decoded_bc7_block))
-			return false;
-
-		uint32_t cur_err = 0;
-		for (uint32_t i = 0; i < 16; i++)
-		{
-			int dr, dg, db, da;
-			dr = pPixels[i].m_c[0] - decoded_bc7_block[i].m_c[0];
-			dg = pPixels[i].m_c[1] - decoded_bc7_block[i].m_c[1];
-			db = pPixels[i].m_c[2] - decoded_bc7_block[i].m_c[2];
-			da = pPixels[i].m_c[3] - decoded_bc7_block[i].m_c[3];
-
-			cur_err += dr * dr + dg * dg + db * db + da * da;
-		}
-
-		if (cur_err == 0)
-			continue;
-
-		const uint32_t bc7_mode = orig_blk.get_mode();
-		if (bc7_mode == 8)
-			return false;
-
-		const float max_std_dev = compute_block_max_std_dev(pPixels);
-
-		float yl = clampf(max_std_dev / params.m_max_smooth_block_std_dev, 0.0f, 1.0f);
-		yl = yl * yl;
-		const float smooth_block_error_scale = lerp(params.m_smooth_block_max_mse_scale, 1.0f, yl);
-				
-		// Divide by 16*4 to compute RMS error
-		const float cur_ms_err = (float)cur_err * (1.0f/64.0f);
-		//const float cur_rms_err = sqrtf(cur_ms_err);
-				
-		float cur_t = cur_ms_err * smooth_block_error_scale + (LITERAL_BITS * sizeof(bc7_block)) * params.m_lambda;
-
-		int first_block_to_check = std::max<int>(0, block_index - total_blocks_to_check);
-		int last_block_to_check = block_index - 1;
-
-		bc7_block cur_trial_blk(orig_blk);
-
-		bc7_block best_block(orig_blk);
-		float best_t = cur_t;
-		uint32_t best_len = 0;
-
-		const float thresh_ms_err = params.m_max_allowed_rms_increase_ratio * params.m_max_allowed_rms_increase_ratio * cur_ms_err;
-
-		for (int prev_block_index = last_block_to_check; prev_block_index >= first_block_to_check; --prev_block_index)
-		{
-			const bc7_block& prev_blk = pBC7_blocks[prev_block_index];
-			const uint32_t prev_blk_mode = prev_blk.get_mode();
-
-			// Don't bother trying to replace bits from different modes, that's unlikely to be worth it.
-			//if (bc7_mode != prev_blk_mode)
-			//	continue;
-			
-			for (uint32_t len = 16; len >= 3; len--)
-			{
-				// Assume the block has 1 match and 16-match_len literals.
-				const float trial_bits = (sizeof(bc7_block) - len) * LITERAL_BITS + compute_match_cost_estimate((block_index - prev_block_index) * 16, len);
-				const float trial_bits_times_lambda = trial_bits * params.m_lambda;
-								
-				for (uint32_t ofs = 0; ofs <= (sizeof(bc7_block) - len); ofs++)
-				{
-					assert(len + ofs <= sizeof(bc7_block));
-
-					bc7_block trial_blk(cur_trial_blk);
-					memcpy((uint8_t*)&trial_blk + ofs, (uint8_t*)&prev_blk + ofs, len);
-
-					color_rgba trial_bc7_block[16];
-					if (!bc7decomp::unpack_bc7(&trial_blk, (bc7decomp::color_rgba*)trial_bc7_block))
-						continue;
-
-					uint32_t trial_err = 0;
-					for (uint32_t i = 0; i < 16; i++)
-					{
-						int dr, dg, db, da;
-						dr = pPixels[i].m_c[0] - trial_bc7_block[i].m_c[0];
-						dg = pPixels[i].m_c[1] - trial_bc7_block[i].m_c[1];
-						db = pPixels[i].m_c[2] - trial_bc7_block[i].m_c[2];
-						da = pPixels[i].m_c[3] - trial_bc7_block[i].m_c[3];
-
-						trial_err += dr * dr + dg * dg + db * db + da * da;
-					}
-
-					float trial_ms_err = (float)trial_err * (1.0f/64.0f);
-					
-					if (trial_ms_err < thresh_ms_err)
-					{
-						float t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
-						if (t < best_t)
-						{
-							best_t = t;
-							best_block = trial_blk;
-							best_len = len;
-						}
-					}
-				} // ofs
-								
-			} // len
-
-		} // prev_block_index
-	
-		if (best_t < cur_t)
-		{
-			pBC7_blocks[block_index] = best_block;
-			total_modified++;
-			len_hist[best_len]++;
-		}
-
-	} // block_index
-
-	if (params.m_debug_output)
-	{
-		printf("Match length historgram:\n");
-		for (uint32_t i = 1; i <= 16; i++)
-			printf("%u, ", len_hist[i]);
-		printf("\n");
-	}
-
-	return true;
-}
-
 /*
 ------------------------------------------------------------------------------
 This software is available under 2 licenses -- choose whichever you prefer.
-// If you use this software in a product, attribution / credits is requested but not required.
+If you use this software in a product, attribution / credits is requested but not required.
 ------------------------------------------------------------------------------
 ALTERNATIVE A - MIT License
 Copyright(c) 2020-2021 Richard Geldreich, Jr.

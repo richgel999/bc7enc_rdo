@@ -8,6 +8,8 @@
 #define BC7ENC_MAX_PARTITIONS (64)
 #define BC7ENC_MAX_UBER_LEVEL (4)
 
+struct color_rgba { uint8_t m_c[4]; };
+
 struct bc7enc_compress_block_params
 {
 	uint32_t m_mode_mask;
@@ -112,46 +114,4 @@ void bc7enc_compress_block_init();
 // Returns true if the block had any pixels with alpha < 255, otherwise it return false. (This is not an error code - a block is always encoded.)
 bool bc7enc_compress_block(void *pBlock, const void *pPixelsRGBA, const bc7enc_compress_block_params *pComp_params);
 
-struct color_rgba { uint8_t m_c[4]; };
-
-struct bc7enc_rdo_params
-{
-	// m_lambda: The post-processor tries to reduce distortion*smooth_block_scale + rate*lambda (rate is approximate LZ bits and distortion is scaled MS error multiplied against the smooth block MSE weighting factor).
-	// Larger values push the postprocessor towards optimizing more for lower rate, and smaller values more for distortion. 0=minimal distortion.
-	float m_lambda;
-
-	// m_lookback_window_size: The number of bytes the encoder can look back from each block to find matches. The larger this value, the slower the encoder but the higher the quality per LZ compressed bit.
-	uint32_t m_lookback_window_size;
-	
-	// m_max_allowed_rms_increase_ratio: How much the RMS error of a block is allowed to increase before a trial is rejected. 1.0=no increase allowed, 1.05=5% increase allowed, etc.
-	float m_max_allowed_rms_increase_ratio;
-
-	float m_max_smooth_block_std_dev;
-	float m_smooth_block_max_mse_scale;
-
-	bool m_debug_output;
-
-	bc7enc_rdo_params() { clear(); }
-
-	void clear()
-	{
-		m_lookback_window_size = 256;
-		m_lambda = 1.0f;
-		m_max_allowed_rms_increase_ratio = 10.0f;
-		m_max_smooth_block_std_dev = 18.0f;
-		m_smooth_block_max_mse_scale = 10.0f;
-		m_debug_output = false;
-	}
-
-	void print()
-	{
-		printf("lambda: %f\n", m_lambda);
-		printf("Lookback window size: %u\n", m_lookback_window_size);
-		printf("Max allowed RMS increase ratio: %f\n", m_max_allowed_rms_increase_ratio);
-		printf("Max smooth block std dev: %f\n", m_max_smooth_block_std_dev);
-		printf("Smooth block max MSE scale: %f\n", m_smooth_block_max_mse_scale);
-	}
-};
-
-bool bc7enc_reduce_entropy(void* pBlocks, uint32_t num_blocks, const color_rgba* pBlock_pixels, const bc7enc_rdo_params& params, uint32_t& total_modified);
 

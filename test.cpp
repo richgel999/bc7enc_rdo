@@ -1150,6 +1150,7 @@ int main(int argc, char *argv[])
 		printf("Wrote DDS file %s\n", dds_output_filename.c_str());
 
 	float csv_psnr = 0.0f, csv_ssim = 0.0f;
+	(void)csv_ssim;
 
 	if ((!no_output_png) && (png_output_filename.size()))
 	{

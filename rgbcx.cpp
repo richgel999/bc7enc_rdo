@@ -4,9 +4,6 @@
 #include <math.h>
 #include <vector>
 
-#define MINIZ_HEADER_FILE_ONLY
-#include "miniz.h"
-
 namespace rgbcx
 {
 	const uint8_t g_bc1_to_linear[4] = { 0, 3, 1, 2 };
