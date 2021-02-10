@@ -97,7 +97,7 @@ For RDO post-processing of any block-based format: ert.cpp/.h. You'll need to su
 
 For BC1-5 encoding/decoding: rgbcx.cpp/.h
 
-For BC7 encoding: bc7encp.cpp/.h
+For BC7 encoding: bc7enc.cpp/.h
 
 For BC7 decoding: bc7decomp.cpp/.h
 
