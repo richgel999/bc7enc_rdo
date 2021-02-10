@@ -2148,7 +2148,7 @@ static void handle_alpha_block(void *pBlock, const color_rgba *pPixels, const bc
 		
 	bc7_optimization_results opt_results6, opt_results5, opt_results7;
 	color_cell_compressor_results results6;
-	memset(&results6, 0, sizeof(&results6));
+	memset(&results6, 0, sizeof(results6));
 
 	uint64_t best_err = UINT64_MAX;
 	uint32_t best_mode = 0;
