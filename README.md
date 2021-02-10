@@ -10,6 +10,8 @@ The next focus will be improving the default smooth block handling.
 
 Note the BC7 encoder in bc7enc.cpp only supports modes 1/5/6/7, but the RDO post-processor function supports all BC7 modes. More modes are coming.
 
+### Compiling
+
 To compile (tested MSVC 2019 x64 and clang 6.0.0):
 
 ```
@@ -18,6 +20,8 @@ make
 ```
 
 Note the MSVC build enables OpenMP for faster compression.
+
+### Examples
 
 To encode to non-RDO BC7 using entropy reduced or quantized/weighted BC7 (super fast, slightly reduced quality, but 5-10% better LZ compression):
 
