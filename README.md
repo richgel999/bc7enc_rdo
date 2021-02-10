@@ -85,7 +85,7 @@ This sets the window size to 32KB (the highest setting that makes sense for Defl
 RDO mode is supported for all the BC formats. The command line tool uses the same value of lambda for all blocks.
 
 Features:
-- Rate Distortion Optimization (RDO) using a simple transform
+- Rate Distortion Optimization (RDO) using a simple transform applied to the encoded texture data.
 
 - BC1/3 encoder (in [rgbcx.h](https://github.com/richgel999/bc7enc/blob/master/rgbcx.h)) uses a new algorithm (which we've named "prioritized cluster fit") which is 3-4x faster than traditional cluster fit (as implemented in [libsquish](https://github.com/svn2github/libsquish) with SSE2) at the same or slightly higher average quality using scalar CPU instructions. This algorithm is suitable for GPU encoder implementations.
 
