@@ -791,8 +791,7 @@ int main(int argc, char *argv[])
 			static bool unpack_bc7_block(const void* pBlock, ert::color_rgba* pPixels, void* pUser_data)
 			{
 				(void)pUser_data;
-				bc7decomp::unpack_bc7(pBlock, (bc7decomp::color_rgba*)pPixels);
-				return true;
+				return bc7decomp::unpack_bc7(pBlock, (bc7decomp::color_rgba*)pPixels);
 			}
 		};
 
