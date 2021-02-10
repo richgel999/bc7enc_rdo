@@ -87,10 +87,15 @@ This sets the window size to 32KB (the highest setting that makes sense for Defl
 RDO mode is supported for all the BC formats. The command line tool uses the same value of lambda for all blocks.
 
 ### Dependencies
-There are no 3rd party code or library dependencies. The code is mostly C++03 and uses the C/C++ CRT. utils.cpp/.h is only needed by the command line tool. 
+There are no 3rd party code or library dependencies. The code is mostly C++03 and uses the C/C++ CRT. utils.cpp/.h is only needed by the example command line tool.
 
-For non-RDO BC7 encoding, you only need 
+For RDO post-processing of any block-based format: ert.cpp/.h. You'll need to supply a block decoder function for your format as a callback. It must return false if the passed in block data is invalid.
 
+For BC1-5 encoding/decoding: rgbcx.cpp/.h
+
+For BC7 encoding: bc7encp.cpp/.h
+
+For BC7 decoding: bc7decomp.cpp/.h
 
 ### Features:
 - Rate Distortion Optimization (RDO) using a simple transform applied to the encoded texture data.
