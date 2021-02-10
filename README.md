@@ -1,8 +1,10 @@
-bc7enc - Fast, single source file BC1-5 and BC7 (BPTC) GPU texture encoders with optional Rate Distortion Optimization (RDO).
+bc7enc - Fast BC1-7 GPU texture encoders with optional rate distortion optimization (RDO)
 
-This repo is a work in progress. RDO BC1/4 is in and working okay, but I'm going to be rewriting it next. BC7 RDO is in and working surprisingly well. I have only minimally tested the new RDO BC7 encoder, especially on alpha textures. You can see examples of the RDO BC7 encoder's current output [here](https://richg42.blogspot.com/2021/02/more-rdo-bc7-encoding.html). Some examples on how to use the command line tool for various BC7 modes are on my blog, [here](https://richg42.blogspot.com/2021/02/how-to-use-bc7encrdo.html).
+This repo contains fast texture encoders for BC1-7. All formats support a simple post-processing transform on the encoded texture data designed to trade off quality for lower compressed file sizes using LZ compression. Currently, the entropy reduction transform is tuned for Deflate, LZHAM, or LZMA.
 
-Note the BC7 encoder in bc7enc.cpp only supports modes 1/5/6/7, but the RDO post-processor function bc7enc_reduce_entropy() supports all BC7 modes.
+You can see examples of the RDO BC7 encoder's current output [here](https://richg42.blogspot.com/2021/02/more-rdo-bc7-encoding.html). Some examples on how to use the command line tool for various BC7 modes are on my blog, [here](https://richg42.blogspot.com/2021/02/how-to-use-bc7encrdo.html).
+
+Note the BC7 encoder in bc7enc.cpp only supports modes 1/5/6/7, but the RDO post-processor function supports all BC7 modes.
 
 To compile (tested MSVC 2019 x64 and clang 6.0.0):
 
@@ -16,19 +18,19 @@ Note the MSVC build enables OpenMP for faster compression.
 To encode to non-RDO BC7 using entropy reduced or quantized/weighted BC7 (super fast, slightly reduced quality, but 5-10% better LZ compression):
 
 ```
-./bc7enc -o -u4 blah.png -e
+./bc7enc -o blah.png -e
 ```
 
-To encode to RDO BC7 using the latest algorithm (using the Entropy Reduction Transform - or ERT) combined with reduced entropy BC7 encoding:
+To encode to RDO BC7 using the entropy reduction transform combined with reduced entropy BC7 encoding, with a slightly larger window size than the default which is 128 bytes:
 
 ```
-./bc7enc -o -u4 -zc256 blah.png -e -z1.0
+./bc7enc -o -zc256 blah.png -e -z1.0
 ```
 
-To encode to RDO BC7 using the latest algorithm (using the Entropy Reduction Transform - or ERT) at higher effectivenes using a larger window size:
+To encode to RDO BC7 using the entropy reduction transform at higher effectivenes using a larger window size:
 
 ```
-./bc7enc -o -u4 -zc1024 blah.png -z1.0
+./bc7enc -o -zc1024 blah.png -z1.0
 ```
 
 To encode to BC1:
@@ -36,19 +38,14 @@ To encode to BC1:
 ./bc7enc -1 blah.png
 ```
 
-To encode to BC1 with highest quality:
-```
-./bc7enc -L18 -1 blah.png
-```
-
 To encode to BC1 with Rate Distortion Optimization (RDO) at lambda=1.0:
 ```
-./bc7enc -L10 -1 -z1.0 blah.png
+./bc7enc -1 -z1.0 blah.png
 ```
 
-The -z option controls lambda, or the rate vs. distortion tradeoff. 0 = maximum quality, higher values=lower bitrates but lower quality. Try values [.5-8].
+The -z option controls lambda, or the rate vs. distortion tradeoff. 0 = maximum quality, higher values=lower bitrates but lower quality. Try values [.25-8].
 
-To encode to BC1 with RDO with RDO debug output, to monitor the percentage of blocks impacted:
+To encode to BC1 with RDO, with RDO debug output, to monitor the percentage of blocks impacted:
 ```
 ./bc7enc -1 -z1.0 -zd blah.png
 ```
@@ -60,25 +57,21 @@ To encode to BC1 with RDO with a higher then default smooth block scale factor (
 
 Use -zb1.0 to disable smooth block error scaling completely, which increases RDO performance but can result in noticeable artifacts on smooth/flat blocks at higher lambdas.
 
-Use -zc# to control the RDO window size in bytes. Good values are 128-8192. -zt to disable RDO multithreading.
+Use -zc# to control the RDO window size in bytes. Good values are 128-8192. 
+Use -zt to disable RDO multithreading. Currently, OpenMP is enabled in MSVC builds, but not in other builds.
 
-To encode to BC1 with RDO at the highest achievable quality/effectiveness (this is noticeably slower):
+To encode to BC1 with RDO at the highest achievable quality/effectiveness (this is extremely slower):
 
 ```
-./bc7enc -1 -z1.0 -zc32768 -L18 blah.png
+./bc7enc -1 -z1.0 -zc32768 blah.png
 ```
 
-This sets the BC1 encoder to level 18 (highest quality), the LZ dictionary size to 32KB (the highest setting that makes sense for Deflate). Dictionary sizes of 2KB (the default) to 8KB are way faster and in practice are almost as effective. The maximum dictionary setting supported by the command line tool is 64KB, but this would be very slow.
+This sets the window size to 32KB (the highest setting that makes sense for Deflate). Window sizes of 2KB (the default) to 8KB are way faster and in practice are almost as effective. The maximum window size setting supported by the command line tool is 64KB, but this would be very slow.
 
-RDO mode is also supported with BC4, using the -4 option. RDO BC3/5 (which are just variants of BC1/4) are coming next.
+RDO mode is supported for all the BC formats. The command line tool uses the same value of lambda for all blocks.
 
 Features:
-- Rate Distortion Optimization (RDO)
-
-Currently for BC1 and BC4. Currently implementing BC3/5 (which is easy).
-RDO is still a work in progress, but BC1/4 are working fairly well now.
-
-The RDO BC7 encoder is my latest RDO encoder. RDO1-5 still need work.
+- Rate Distortion Optimization (RDO) using a simple transform
 
 - BC1/3 encoder (in [rgbcx.h](https://github.com/richgel999/bc7enc/blob/master/rgbcx.h)) uses a new algorithm (which we've named "prioritized cluster fit") which is 3-4x faster than traditional cluster fit (as implemented in [libsquish](https://github.com/svn2github/libsquish) with SSE2) at the same or slightly higher average quality using scalar CPU instructions. This algorithm is suitable for GPU encoder implementations.
 
