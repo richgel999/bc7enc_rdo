@@ -1,4 +1,4 @@
-bc7enc - Fast BC1-7 GPU texture encoders with optional rate distortion optimization (RDO)
+bc7enc - Fast BC1-7 GPU texture encoders with optional Rate Distortion Optimization (RDO)
 
 This repo contains fast texture encoders for BC1-7. All formats support a simple post-processing transform on the encoded texture data designed to trade off quality for smaller compressed file sizes using LZ compression. Significant (10-50%) size reductions are possible. The BC7 encoder also supports a "reduced entropy" mode using the -e option which causes the output to be biased/weighted in various ways which minimally impact quality, which results in 5-10% smaller file sizes with no slowdowns in encoding time.
 
