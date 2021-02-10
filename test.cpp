@@ -1207,7 +1207,8 @@ int main(int argc, char *argv[])
 					rgbcx::unpack_bc5(pBlock, &unpacked_pixels[0][0], 0, 1, 4);
 					break;
 				case DXGI_FORMAT_BC7_UNORM:
-					bc7decomp::unpack_bc7((const uint8_t*)pBlock, (bc7decomp::color_rgba*)unpacked_pixels);
+					if (!bc7decomp::unpack_bc7((const uint8_t*)pBlock, (bc7decomp::color_rgba*)unpacked_pixels))
+						printf("bc7decomp::unpack_bc7() failed!\n");
 					break;
 				default:
 					assert(0);
