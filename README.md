@@ -6,9 +6,9 @@ Currently, the entropy reduction transform is tuned for Deflate, LZHAM, or LZMA.
 
 You can see examples of the RDO BC7 encoder's current output [here](https://richg42.blogspot.com/2021/02/more-rdo-bc7-encoding.html). Some examples on how to use the command line tool for various BC7 modes are on my blog, [here](https://richg42.blogspot.com/2021/02/how-to-use-bc7encrdo.html).
 
-The next focus will be improving the default smooth block handling.
+The next focus will be improving the default smooth block handling. Also, 
 
-Note the BC7 encoder in bc7enc.cpp only supports modes 1/5/6/7, but the RDO post-processor function supports all BC7 modes. More modes are coming.
+Note the BC7 encoder in bc7enc.cpp only supports modes 1/5/6/7, but the RDO post-processor function supports all BC7 modes. More modes are coming. My very high quality/fast ISPC encoder, [bc7e](https://github.com/BinomialLLC/bc7e), supports all the BC7 modes. I will be adding mode/p-bit/partition weighting to bc7e soon.
 
 ### Compiling
 
