@@ -34,7 +34,7 @@ static int print_usage()
 	fprintf(stderr, "-apng_filename Load G channel of PNG file into alpha channel of source image\n");
 	fprintf(stderr, "-g Don't write unpacked output PNG files (this disables PSNR metrics too).\n");
 	fprintf(stderr, "-y Flip source image along Y axis before packing\n");
-	fprintf(stderr, "-o Write output files to the current directory\n");
+	fprintf(stderr, "-o Write output files to the source file's directory\n");
 	fprintf(stderr, "-1 Encode to BC1. -u[0,5] controls quality vs. perf. tradeoff for RGB.\n");
 	fprintf(stderr, "-3 Encode to BC3. -u[0,5] controls quality vs. perf. tradeoff for RGB.\n");
 	fprintf(stderr, "-4 Encode to BC4\n");
@@ -72,10 +72,10 @@ static int print_usage()
 	fprintf(stderr, "\nFor BC4 and BC5: Not all tools support reading DX9-style BC4/BC5 format files (or BC4/5 files at all). AMD Compressonator does.\n");
 	fprintf(stderr, "\nFor BC1, the engine/shader must ignore decoded texture alpha because the encoder utilizes transparent texel to get black/dark texels. Use -b to disable.\n");
 	fprintf(stderr, "\nReduced entropy/RDO encoding examples:\n");
-	fprintf(stderr, "\n\"bc7enc -o -e blah.png\" - Reduced entropy BC7 encoding (fast, but only 5-10%% gains)\n");
-	fprintf(stderr, "\"bc7enc -o -z1.0 -zc256 blah.png\" - RDO BC7 with lambda 1.0, window size 256 bytes (default window is only 128)\n");
-	fprintf(stderr, "\"bc7enc -o -z1.0 -e -zc1024 blah.png\" - RDO BC7 with lambda 1.0, window size 1024 bytes for more gains (but slower), combined with reduced entropy BC7\n");
-	fprintf(stderr, "\"bc7enc -o -1 -z1.0 blah.png\" - RDO BC1 with lambda 1.0\n");
+	fprintf(stderr, "\n\"bc7enc -e blah.png\" - Reduced entropy BC7 encoding (fast, but only 5-10%% gains)\n");
+	fprintf(stderr, "\"bc7enc -z1.0 -zc256 blah.png\" - RDO BC7 with lambda 1.0, window size 256 bytes (default window is only 128)\n");
+	fprintf(stderr, "\"bc7enc -z1.0 -e -zc1024 blah.png\" - RDO BC7 with lambda 1.0, window size 1024 bytes for more gains (but slower), combined with reduced entropy BC7\n");
+	fprintf(stderr, "\"bc7enc -1 -z1.0 blah.png\" - RDO BC1 with lambda 1.0\n");
 			
 	return EXIT_FAILURE;
 }
@@ -96,7 +96,7 @@ int main(int argc, char *argv[])
 	std::string src_filename, src_alpha_filename, dds_output_filename, png_output_filename, png_alpha_output_filename;
 
 	bool no_output_png = false;
-	bool out_cur_dir = false;
+	bool out_cur_dir = true;
 
 	int bc7_uber_level = BC7ENC_MAX_UBER_LEVEL;
 	int max_partitions_to_scan = BC7ENC_MAX_PARTITIONS;
@@ -350,7 +350,7 @@ int main(int argc, char *argv[])
 				}
 				case 'o':
 				{
-					out_cur_dir = true;
+					out_cur_dir = false;
 					break;
 				}
 				case 'b':
@@ -1209,6 +1209,7 @@ int main(int argc, char *argv[])
 				case DXGI_FORMAT_BC7_UNORM:
 					if (!bc7decomp::unpack_bc7((const uint8_t*)pBlock, (bc7decomp::color_rgba*)unpacked_pixels))
 						printf("bc7decomp::unpack_bc7() failed!\n");
+
 					break;
 				default:
 					assert(0);
