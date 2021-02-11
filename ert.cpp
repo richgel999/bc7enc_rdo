@@ -273,7 +273,7 @@ namespace ert
 			float best_t = cur_t;
 			uint32_t best_match_len = 0, best_match_src_window_ofs = 0, best_match_dst_window_ofs = 0, best_match_src_block_ofs = 0, best_match_dst_block_ofs = 0;
 
-			const float thresh_ms_err = params.m_max_allowed_rms_increase_ratio * params.m_max_allowed_rms_increase_ratio * cur_mse;
+			const float thresh_ms_err = params.m_max_allowed_rms_increase_ratio * params.m_max_allowed_rms_increase_ratio * std::max(cur_mse, 1.0f);
 
 			for (int prev_block_index = last_block_to_check; prev_block_index >= first_block_to_check; --prev_block_index)
 			{
