@@ -2,6 +2,9 @@
 #include "utils.h"
 #include "lodepng.h"
 
+namespace utils 
+{
+
 bool load_png(const char* pFilename, image_u8& img)
 {
 	img.clear();
@@ -594,3 +597,26 @@ uint32_t hash_hsieh(const uint8_t* pBuf, size_t len)
 
 	return h;
 }
+
+float compute_block_max_std_dev(const color_quad_u8* pPixels, uint32_t block_width, uint32_t block_height, uint32_t num_comps)
+{
+	tracked_stat comp_stats[4];
+
+	for (uint32_t y = 0; y < block_height; y++)
+	{
+		for (uint32_t x = 0; x < block_width; x++)
+		{
+			const color_quad_u8* pPixel = pPixels + x + y * block_width;
+
+			for (uint32_t c = 0; c < num_comps; c++)
+				comp_stats[c].update(pPixel->m_c[c]);
+		}
+	}
+
+	float max_std_dev = 0.0f;
+	for (uint32_t i = 0; i < num_comps; i++)
+		max_std_dev = std::max(max_std_dev, comp_stats[i].get_std_dev());
+	return max_std_dev;
+}
+
+} // namespace utils

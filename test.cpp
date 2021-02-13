@@ -24,6 +24,8 @@
 
 #include "miniz.h"
 
+using namespace utils;
+
 static int print_usage()
 {
 	fprintf(stderr, "Reads PNG files (with or without alpha channels) and packs them to BC1-5 or BC7/BPTC (default) using\nmodes 1, 6 (opaque blocks) or modes 1, 5, 6, and 7 (alpha blocks).\n");
@@ -58,6 +60,7 @@ static int print_usage()
 	fprintf(stderr, "-zb# BC1-7: Manually set smooth block scale factor, higher values = less distortion on smooth blocks, try 5-70\n");
 	fprintf(stderr, "-zc# BC1: Set RDO lookback window size in bytes (higher=more effective but slower, default=128, try 64-16384)\n");
 	fprintf(stderr, "-zm BC1-7: Allow byte sequences to be moved inside blocks (much slower)\n");
+	fprintf(stderr, "-zu BC1/3/7: Disable RGB ultrasmooth block detection/handling\n");
 	fprintf(stderr, "RDO debugging/development:\n");
 	fprintf(stderr, "-zd BC1-7: Enable debug output\n");
 	fprintf(stderr, "-zt BC1-7: Disable RDO multithreading\n");
@@ -78,6 +81,153 @@ static int print_usage()
 	fprintf(stderr, "\"bc7enc -1 -z1.0 blah.png\" - RDO BC1 with lambda 1.0\n");
 			
 	return EXIT_FAILURE;
+}
+
+static std::vector<float> compute_block_mse_scales(const image_u8& source_image, uint32_t blocks_x, uint32_t blocks_y, uint32_t total_blocks, bool rdo_debug_output)
+{
+	const float ULTRASMOOTH_BLOCK_STD_DEV_THRESHOLD = 2.9f;
+	const float DARK_THRESHOLD = 13.0f;
+	const float BRIGHT_THRESHOLD = 222.0f;
+	const float ULTRAMOOTH_BLOCK_MSE_SCALE = 120.0f;
+	const uint32_t ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD = 64;
+
+	image_u8 ultrasmooth_blocks_vis(blocks_x, blocks_y);
+
+	for (uint32_t by = 0; by < blocks_y; by++)
+	{
+		for (uint32_t bx = 0; bx < blocks_x; bx++)
+		{
+			color_quad_u8 block_pixels[16];
+			source_image.get_block(bx, by, 4, 4, block_pixels);
+
+			tracked_stat y_stats;
+			for (uint32_t y = 0; y < 4; y++)
+				for (uint32_t x = 0; x < 4; x++)
+				{
+					int l = block_pixels[x + y * 4].get_luma();
+					y_stats.update(l);
+				}
+
+			float max_std_dev = compute_block_max_std_dev((color_quad_u8*)block_pixels, 4, 4, 3);
+
+			float yl = max_std_dev / ULTRASMOOTH_BLOCK_STD_DEV_THRESHOLD;
+
+			yl = clamp(yl, 0.0f, 1.0f);
+			yl *= yl;
+
+			float y_avg = y_stats.get_average();
+
+			if ((y_avg < DARK_THRESHOLD) || (y_avg >= BRIGHT_THRESHOLD))
+				yl = 1.0f;
+
+			int k = std::min<int>((int)(yl * 255.0f + .5f), 255);
+
+			ultrasmooth_blocks_vis.set_rect_clipped(bx, by, 1, 1, color_quad_u8((uint8_t)k, 255));
+		}
+	}
+
+	for (int pass = 0; pass < 1; pass++)
+	{
+		image_u8 next_vis(ultrasmooth_blocks_vis);
+
+		for (int y = 0; y < (int)blocks_y; y++)
+		{
+			for (int x = 0; x < (int)blocks_x; x++)
+			{
+				int m = 0;
+
+				for (int dy = -1; dy <= 1; dy++)
+					for (int dx = -1; dx <= 1; dx++)
+					{
+						if (ultrasmooth_blocks_vis.get_clamped(x + dx, y + dy).r() == 255)
+							m = std::max<int>(m, ultrasmooth_blocks_vis.get_clamped(x + dx, y + dy).r());
+					}
+
+				next_vis(x, y).set((uint8_t)m, 255);
+			}
+		}
+
+		ultrasmooth_blocks_vis.swap(next_vis);
+	}
+
+	for (uint32_t pass = 0; pass < 32; pass++)
+	{
+		image_u8 next_vis(ultrasmooth_blocks_vis);
+		for (int y = 0; y < (int)blocks_y; y++)
+		{
+			for (int x = 0; x < (int)blocks_x; x++)
+			{
+				if (ultrasmooth_blocks_vis.get_clamped(x, y).r() < 255)
+				{
+					int m = 0;
+
+					for (int dy = -1; dy <= 1; dy++)
+						for (int dx = -1; dx <= 1; dx++)
+							if (ultrasmooth_blocks_vis.get_clamped(x + dx, y + dy).r() == 255)
+								m++;
+
+					if (m >= 5)
+						next_vis.set_clipped(x, y, color_quad_u8(255, 255, 255, 255));
+				}
+			}
+		}
+		ultrasmooth_blocks_vis.swap(next_vis);
+	}
+
+	image_u8 orig_ultrasmooth_blocks_vis(ultrasmooth_blocks_vis);
+
+	if (rdo_debug_output)
+	{
+		save_png("ultrasmooth_block_mask_pre_filter.png", ultrasmooth_blocks_vis, false);
+	}
+
+	for (uint32_t by = 0; by < blocks_y; by++)
+	{
+		for (uint32_t bx = 0; bx < blocks_x; bx++)
+		{
+			const bool is_ultrasmooth = ultrasmooth_blocks_vis(bx, by).r() == 0;
+			if (!is_ultrasmooth)
+				continue;
+
+			std::vector<image_u8::pixel_coord> filled_pixels;
+			filled_pixels.reserve(256);
+
+			uint32_t total_set_pixels = ultrasmooth_blocks_vis.flood_fill(bx, by, color_quad_u8(255, 255, 255, 255), color_quad_u8(0, 0, 0, 255), &filled_pixels);
+						
+			if (total_set_pixels < ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD)
+			{
+				for (uint32_t i = 0; i < filled_pixels.size(); i++)
+					orig_ultrasmooth_blocks_vis(filled_pixels[i].m_x, filled_pixels[i].m_y) = color_quad_u8(255, 255, 255, 255);
+			}
+		
+		} // bx
+	} // by
+
+	ultrasmooth_blocks_vis = orig_ultrasmooth_blocks_vis;
+	
+	if (rdo_debug_output)
+	{
+		save_png("ultrasmooth_block_mask.png", ultrasmooth_blocks_vis, false);
+	}
+		
+	std::vector<float> block_mse_scales(total_blocks);
+	
+	uint32_t total_ultrasmooth_blocks = 0;
+	for (uint32_t by = 0; by < blocks_y; by++)
+	{
+		for (uint32_t bx = 0; bx < blocks_x; bx++)
+		{
+			const bool is_ultrasmooth = ultrasmooth_blocks_vis(bx, by).r() == 0;
+
+			block_mse_scales[bx + by * blocks_x] = is_ultrasmooth ? ULTRAMOOTH_BLOCK_MSE_SCALE : -1.0f;
+			
+			total_ultrasmooth_blocks += is_ultrasmooth;
+		}
+	}
+
+	printf("Total ultrasmooth blocks: %3.2f%%\n", total_ultrasmooth_blocks * 100.0f / total_blocks);
+
+	return block_mse_scales;
 }
 
 int main(int argc, char *argv[])
@@ -116,8 +266,8 @@ int main(int argc, char *argv[])
 	DXGI_FORMAT dxgi_format = DXGI_FORMAT_BC7_UNORM;
 	uint32_t pixel_format_bpp = 8;
 	bool force_dx10_dds = false;
-
-	float rdo_q = 0.0f;
+		
+	float rdo_lambda = 0.0f;
 	bool rdo_debug_output = false;
 	float rdo_smooth_block_error_scale = 15.0f;
 	bool custom_rdo_smooth_block_error_scale = false;
@@ -129,6 +279,7 @@ int main(int argc, char *argv[])
 	bool rdo_bc7_pbit1_weighting = true;
 	float rdo_max_smooth_block_std_dev = 18.0f;
 	bool rdo_allow_relative_movement = false;
+	bool rdo_ultrasmooth_block_handling = true;
 	
 	bool use_hq_bc345 = true;
 	int bc345_search_rad = 5;
@@ -324,6 +475,10 @@ int main(int argc, char *argv[])
 					{
 						rdo_allow_relative_movement = true;
 					}
+					else if (strncmp(pArg, "-zu", 3) == 0)
+					{
+						rdo_ultrasmooth_block_handling = false;
+					}
 					else if (strncmp(pArg, "-zb", 3) == 0)
 					{
 						rdo_smooth_block_error_scale = (float)atof(pArg + 3);
@@ -343,8 +498,8 @@ int main(int argc, char *argv[])
 					}
 					else
 					{
-						rdo_q = (float)atof(pArg + 2);
-						rdo_q = std::min<float>(std::max<float>(rdo_q, 0.0f), 100.0f);
+						rdo_lambda = (float)atof(pArg + 2);
+						rdo_lambda = std::min<float>(std::max<float>(rdo_lambda, 0.0f), 500.0f);
 					}
 					break;
 				}
@@ -475,7 +630,7 @@ int main(int argc, char *argv[])
 	}
 
 	source_image.crop_dup_borders((source_image.width() + 3) & ~3, (source_image.height() + 3) & ~3);
-		
+
 	const uint32_t blocks_x = source_image.width() / 4;
 	const uint32_t blocks_y = source_image.height() / 4;
 	const uint32_t total_blocks = blocks_x * blocks_y;
@@ -517,7 +672,7 @@ int main(int argc, char *argv[])
 	if (bc7_mode6_only)
 		bc7_pack_params.m_mode_mask = 1 << 6;
 
-	if ((dxgi_format == DXGI_FORMAT_BC7_UNORM) && (rdo_q > 0.0f))
+	if ((dxgi_format == DXGI_FORMAT_BC7_UNORM) && (rdo_lambda > 0.0f))
 	{
 		// Slam off perceptual in RDO mode - we don't support it (too slow).
 		perceptual = false;
@@ -573,16 +728,8 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
-#if 0
-		if (!custom_lookback_window_size)
-		{
-			// Use a better default for BC1. 
-			m_lookback_window_size = 1024;
-		}
-#endif
-
 		printf("BC1 level: %u, use 3-color mode: %u, use 3-color mode for black: %u, bc1_mode: %u\nrdo_q: %f\nm_lookback_window_size: %u, rdo_smooth_block_error_scale: %f\n", 
-			bc1_quality_level, use_bc1_3color_mode, use_bc1_3color_mode_for_black, (int)bc1_mode, rdo_q, m_lookback_window_size, rdo_smooth_block_error_scale);
+			bc1_quality_level, use_bc1_3color_mode, use_bc1_3color_mode_for_black, (int)bc1_mode, rdo_lambda, m_lookback_window_size, rdo_smooth_block_error_scale);
 	}
 
 	if ((dxgi_format == DXGI_FORMAT_BC3_UNORM) || (dxgi_format == DXGI_FORMAT_BC4_UNORM) || (dxgi_format == DXGI_FORMAT_BC5_UNORM))
@@ -707,7 +854,7 @@ int main(int argc, char *argv[])
 	//save_dds("before_rdo.dds", orig_width, orig_height, (bytes_per_block == 16) ? (void*)&packed_image16[0] : (void*)&packed_image8[0], pixel_format_bpp, dxgi_format, perceptual, force_dx10_dds);
 	
 	// Post-process the data with Rate Distortion Optimization
-	if (rdo_q > 0.0f)
+	if (rdo_lambda > 0.0f)
 	{
 		const uint32_t MIN_RDO_MULTITHREADING_BLOCKS = 4096;
 		const int rdo_total_threads = (rdo_multithreading && (max_threads > 1) && (total_blocks >= MIN_RDO_MULTITHREADING_BLOCKS)) ? max_threads : 1;
@@ -731,7 +878,7 @@ int main(int argc, char *argv[])
 
 		ert::reduce_entropy_params ert_p;
 
-		ert_p.m_lambda = rdo_q;
+		ert_p.m_lambda = rdo_lambda;
 		ert_p.m_lookback_window_size = m_lookback_window_size;
 		ert_p.m_smooth_block_max_mse_scale = rdo_smooth_block_error_scale;
 		ert_p.m_max_smooth_block_std_dev = rdo_max_smooth_block_std_dev;
@@ -739,6 +886,8 @@ int main(int argc, char *argv[])
 		ert_p.m_allow_relative_movement = rdo_allow_relative_movement;
 		ert_p.m_skip_zero_mse_blocks = false;
 
+		std::vector<float> block_rgb_mse_scales(compute_block_mse_scales(source_image, blocks_x, blocks_y, total_blocks, rdo_debug_output));
+						
 		std::vector<rgbcx::color32> block_pixels(total_blocks * 16);
 
 		for (uint32_t by = 0; by < blocks_y; by++)
@@ -811,9 +960,17 @@ int main(int argc, char *argv[])
 				// No single smooth block scale setting can work for all textures (unless it's ridiuclously large, killing efficiency).
 				ert_p.m_smooth_block_max_mse_scale = lerp(15.0f, 50.0f, std::min(1.0f, ert_p.m_lambda / 4.0f));
 
-				printf("Using an automatically computed smooth block error scale of %f\n", ert_p.m_smooth_block_max_mse_scale);
+				printf("Using an automatically computed smooth block error scale of %f (use -zb# to override)\n", ert_p.m_smooth_block_max_mse_scale);
 			}
-			
+
+			for (uint32_t by = 0; by < blocks_y; by++)
+				for (uint32_t bx = 0; bx < blocks_x; bx++)
+				{
+					float& s = block_rgb_mse_scales[bx + by * blocks_x];
+					if (s > 0.0f)
+						s = std::max(ert_p.m_smooth_block_max_mse_scale, s * std::min(ert_p.m_lambda, 3.0f));
+				}
+									
 			printf("\nERT parameters:\n");
 			ert_p.print();
 			printf("\n");
@@ -831,11 +988,16 @@ int main(int argc, char *argv[])
 					continue;
 
 				uint32_t total_modified_local = 0;
+
+				std::vector<float> local_block_rgb_mse_scales(num_blocks_to_encode);
+				for (int i = 0; i < num_blocks_to_encode; i++)
+					local_block_rgb_mse_scales[i] = block_rgb_mse_scales[first_block_to_encode + i];
 										
 				ert::reduce_entropy(&packed_image16[first_block_to_encode], num_blocks_to_encode,
 					16, 16, 4, 4, NUM_COMPONENTS,
 					(ert::color_rgba*)&block_pixels[16 * first_block_to_encode], ert_p, total_modified_local,
-					unpacker_funcs::unpack_bc7_block, &block_unpackers);
+					unpacker_funcs::unpack_bc7_block, &block_unpackers, 
+					rdo_ultrasmooth_block_handling ? &local_block_rgb_mse_scales : nullptr);
 
 #pragma omp critical
 				{
@@ -884,8 +1046,8 @@ int main(int argc, char *argv[])
 				// Attempt to compute a decent conservative smooth block MSE max scaling factor.
 				// No single smooth block scale setting can work for all textures (unless it's ridiuclously large, killing efficiency).
 				ert_p.m_smooth_block_max_mse_scale = lerp(10.0f, 30.0f, std::min(1.0f, ert_p.m_lambda / 4.0f));
-
-				printf("Using an automatically computed smooth block error scale of %f\n", ert_p.m_smooth_block_max_mse_scale);
+								
+				printf("Using an automatically computed smooth block error scale of %f (use -zb# to override)\n", ert_p.m_smooth_block_max_mse_scale);
 			}
 
 			printf("\nERT parameters:\n");
@@ -946,7 +1108,7 @@ int main(int argc, char *argv[])
 				// No single smooth block scale setting can work for all textures (unless it's ridiuclously large, killing efficiency).
 				ert_p.m_smooth_block_max_mse_scale = lerp(10.0f, 30.0f, std::min(1.0f, ert_p.m_lambda / 4.0f));
 
-				printf("Using an automatically computed smooth block error scale of %f\n", ert_p.m_smooth_block_max_mse_scale);
+				printf("Using an automatically computed smooth block error scale of %f (use -zb# to override)\n", ert_p.m_smooth_block_max_mse_scale);
 			}
 
 			printf("\nERT parameters:\n");
@@ -995,8 +1157,17 @@ int main(int argc, char *argv[])
 			{
 				// This is just a hack - no single setting can work for all textures.
 				ert_p.m_smooth_block_max_mse_scale = lerp(15.0f, 50.0f, std::min(1.0f, ert_p.m_lambda / 8.0f));
-				printf("Using an automatically computed smooth block error scale of %f (use -zb to override)\n", ert_p.m_smooth_block_max_mse_scale);
+
+				printf("Using an automatically computed smooth block error scale of %f (use -zb# to override)\n", ert_p.m_smooth_block_max_mse_scale);
 			}
+
+			for (uint32_t by = 0; by < blocks_y; by++)
+				for (uint32_t bx = 0; bx < blocks_x; bx++)
+				{
+					float& s = block_rgb_mse_scales[bx + by * blocks_x];
+					if (s > 0.0f)
+						s = std::max(ert_p.m_smooth_block_max_mse_scale, s * std::min(ert_p.m_lambda, 3.0f));
+				}
 
 			printf("\nERT parameters:\n");
 			ert_p.print();
@@ -1015,11 +1186,16 @@ int main(int argc, char *argv[])
 					continue;
 
 				uint32_t total_modified_local = 0;
+
+				std::vector<float> local_block_rgb_mse_scales(num_blocks_to_encode);
+				for (int i = 0; i < num_blocks_to_encode; i++)
+					local_block_rgb_mse_scales[i] = block_rgb_mse_scales[first_block_to_encode + i];
 					
 				ert::reduce_entropy(&packed_image8[first_block_to_encode], num_blocks_to_encode,
 					sizeof(rgbcx::bc1_block), sizeof(rgbcx::bc1_block), 4, 4, NUM_COMPONENTS,
 					(ert::color_rgba*)&block_pixels[16 * first_block_to_encode], ert_p, total_modified_local,
-					unpacker_funcs::unpack_bc1_block, &block_unpackers);
+					unpacker_funcs::unpack_bc1_block, &block_unpackers, 
+					rdo_ultrasmooth_block_handling ? &local_block_rgb_mse_scales : nullptr);
 					
 #pragma omp critical
 				{
@@ -1063,11 +1239,20 @@ int main(int argc, char *argv[])
 			{
 				// This is just a hack - no single setting can work for all textures.
 				ert_p.m_smooth_block_max_mse_scale = lerp(15.0f, 50.0f, std::min(1.0f, ert_p.m_lambda / 8.0f));
-				printf("Using an automatically computed smooth block error scale of %f (use -zb to override) for RGB\n", ert_p.m_smooth_block_max_mse_scale);
+
+				printf("Using an automatically computed smooth block error scale of %f (use -zb# to override) for RGB\n", ert_p.m_smooth_block_max_mse_scale);
 				
 				ert_alpha_p.m_smooth_block_max_mse_scale = lerp(10.0f, 30.0f, std::min(1.0f, ert_alpha_p.m_lambda / 4.0f));
-				printf("Using an automatically computed smooth block error scale of %f (use -zb to override) for Alpha\n", ert_alpha_p.m_smooth_block_max_mse_scale);
+				printf("Using an automatically computed smooth block error scale of %f for Alpha\n", ert_alpha_p.m_smooth_block_max_mse_scale);
 			}
+
+			for (uint32_t by = 0; by < blocks_y; by++)
+				for (uint32_t bx = 0; bx < blocks_x; bx++)
+				{
+					float& s = block_rgb_mse_scales[bx + by * blocks_x];
+					if (s > 0.0f)
+						s = std::max(ert_p.m_smooth_block_max_mse_scale, s * std::min(ert_p.m_lambda, 3.0f));
+				}
 
 			printf("\nERT RGB parameters:\n");
 			ert_p.print();
@@ -1098,10 +1283,15 @@ int main(int argc, char *argv[])
 					(ert::color_rgba*)&block_pixels_a[16 * first_block_to_encode], ert_alpha_p, total_modified_local_alpha,
 					unpacker_funcs::unpack_bc4_block, &block_unpackers);
 
+				std::vector<float> local_block_rgb_mse_scales(num_blocks_to_encode);
+				for (int i = 0; i < num_blocks_to_encode; i++)
+					local_block_rgb_mse_scales[i] = block_rgb_mse_scales[first_block_to_encode + i];
+
 				ert::reduce_entropy((uint8_t *)&packed_image16[first_block_to_encode] + sizeof(rgbcx::bc1_block), num_blocks_to_encode,
 					sizeof(rgbcx::bc1_block) * 2, sizeof(rgbcx::bc1_block), 4, 4, 3,
 					(ert::color_rgba*)&block_pixels[16 * first_block_to_encode], ert_p, total_modified_local_rgb,
-					unpacker_funcs::unpack_bc1_block, &block_unpackers);
+					unpacker_funcs::unpack_bc1_block, &block_unpackers, 
+					rdo_ultrasmooth_block_handling ? &local_block_rgb_mse_scales : nullptr);
 					
 #pragma omp critical
 				{
@@ -1118,7 +1308,7 @@ int main(int argc, char *argv[])
 			printf("Total Alpha blocks modified: %u %3.2f%%\n", total_modified_alpha, total_modified_alpha * 100.0f / total_blocks);
 		}
 
-	} // if (rdo_q > 0.0f)
+	} // if (rdo_lambda > 0.0f)
 
 	clock_t overall_end_t = clock();
 
@@ -1330,7 +1520,7 @@ int main(int argc, char *argv[])
 
 	if (pCSV_file)
 	{
-		fprintf(pCSV_file, "%f,%f,%f\n", rdo_q, lz_bits_per_texel, csv_psnr);
+		fprintf(pCSV_file, "%f,%f,%f\n", rdo_lambda, lz_bits_per_texel, csv_psnr);
 		fclose(pCSV_file);
 		pCSV_file = nullptr;
 	}

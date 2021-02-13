@@ -30,7 +30,7 @@ namespace ert
 		float m_smooth_block_max_mse_scale;
 
 		uint32_t m_color_weights[4];
-
+				
 		bool m_allow_relative_movement;
 		bool m_skip_zero_mse_blocks;
 		bool m_debug_output;
@@ -72,6 +72,7 @@ namespace ert
 	bool reduce_entropy(void* pBlocks, uint32_t num_blocks,
 		uint32_t total_block_stride_in_bytes, uint32_t block_size_to_optimize_in_bytes, uint32_t block_width, uint32_t block_height, uint32_t num_comps,
 		const color_rgba* pBlock_pixels, const reduce_entropy_params& params, uint32_t& total_modified,
-		pUnpack_block_func pUnpack_block_func, void* pUnpack_block_func_user_data);
+		pUnpack_block_func pUnpack_block_func, void* pUnpack_block_func_user_data,
+		std::vector<float>* pBlock_mse_scales = nullptr);
 
 } // namespace ert

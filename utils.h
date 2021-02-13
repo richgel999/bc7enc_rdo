@@ -20,6 +20,8 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+namespace utils
+{
 inline int iabs(int i) { if (i < 0) i = -i; return i; }
 inline uint8_t clamp255(int32_t i) { return (uint8_t)((i & 0xFFFFFF00U) ? (~(i >> 31)) : i); }
 template <typename S> inline S clamp(S value, S low, S high) { return (value < low) ? low : ((value > high) ? high : value); }
@@ -66,6 +68,16 @@ struct color_quad_u8
 	inline uint8_t a() const { return m_c[3]; }
 
 	inline int get_luma() const { return (13938U * m_c[0] + 46869U * m_c[1] + 4729U * m_c[2] + 32768U) >> 16U; } // REC709 weightings
+
+	inline bool operator== (const color_quad_u8& other) const
+	{
+		return (m_c[0] == other.m_c[0]) && (m_c[1] == other.m_c[1]) && (m_c[2] == other.m_c[2]) && (m_c[3] == other.m_c[3]);
+	}
+
+	inline bool operator!= (const color_quad_u8& other) const
+	{
+		return !(*this == other);
+	}
 };
 typedef std::vector<color_quad_u8> color_quad_u8_vec;
 
@@ -127,6 +139,14 @@ public:
 		return *this;
 	}
 
+	inline image_u8& set_rect_clipped(int x, int y, int w, int h, const color_quad_u8& c)
+	{
+		for (int y_ofs = 0; y_ofs < h; y_ofs++)
+			for (int x_ofs = 0; x_ofs < w; x_ofs++)
+				set_clipped(x + x_ofs, y + y_ofs, c);
+		return *this;
+	}
+
 	image_u8& crop_dup_borders(uint32_t w, uint32_t h)
 	{
 		const uint32_t orig_w = m_width, orig_h = m_height;
@@ -177,7 +197,7 @@ public:
 		return *this;
 	}
 
-	inline void get_block(uint32_t bx, uint32_t by, uint32_t width, uint32_t height, color_quad_u8* pPixels)
+	inline void get_block(uint32_t bx, uint32_t by, uint32_t width, uint32_t height, color_quad_u8* pPixels) const
 	{
 		assert((bx * width + width) <= m_width);
 		assert((by * height + height) <= m_height);
@@ -208,6 +228,98 @@ public:
 		}
 
 		return *this;
+	}
+
+	struct fill_segment
+	{
+		int16_t m_y, m_xl, m_xr, m_dy;
+
+		fill_segment(int y, int xl, int xr, int dy) :
+			m_y((int16_t)y), m_xl((int16_t)xl), m_xr((int16_t)xr), m_dy((int16_t)dy)
+		{
+		}
+	};
+
+	bool flood_fill_is_inside(int x, int y, const color_quad_u8& b) const
+	{
+		if ( ((uint32_t)x >= m_width) || ((uint32_t)y >= m_height) )
+			return false;
+
+		return (*this)(x, y) == b;
+	}
+
+#define FLOOD_PUSH(y, xl, xr, dy) if (((y + (dy)) >= 0) && ((y + (dy)) < (int)m_height)) { stack.push_back(fill_segment(y, xl, xr, dy)); }
+
+	struct pixel_coord
+	{
+		uint16_t m_x, m_y;
+		pixel_coord() { }
+		pixel_coord(uint32_t x, uint32_t y) : m_x((uint16_t)x), m_y((uint16_t)y) { }
+	};
+
+	// See http://www.realtimerendering.com/resources/GraphicsGems/gems/SeedFill.c
+	uint32_t flood_fill(int x, int y, const color_quad_u8 &c, const color_quad_u8& b, std::vector<pixel_coord> *pSet_pixels = nullptr)
+	{
+		uint32_t total_set = 0;
+
+		if (!flood_fill_is_inside(x, y, b))
+			return 0;
+
+		std::vector<fill_segment> stack;
+		stack.reserve(64);
+
+		FLOOD_PUSH(y, x, x, 1);
+		FLOOD_PUSH(y + 1, x, x, -1);
+
+		while (stack.size())
+		{
+			fill_segment s = stack.back();
+			stack.pop_back();
+
+			int x1 = s.m_xl, x2 = s.m_xr, dy = s.m_dy;
+			y = s.m_y + s.m_dy;
+
+			for (x = x1; (x >= 0) && flood_fill_is_inside(x, y, b); x--)
+			{
+				(*this)(x, y) = c;
+				total_set++;
+				if (pSet_pixels) 
+					pSet_pixels->push_back(pixel_coord(x, y));
+			}
+
+			int l;
+			if (x >= x1)
+				goto skip;
+			
+			l = x + 1;
+			if (l < x1)
+				FLOOD_PUSH(y, l, x1 - 1, -dy);
+
+			x = x1 + 1;
+
+			do
+			{
+				for ( ; x <= ((int)m_width - 1) && flood_fill_is_inside(x, y, b); x++)
+				{
+					(*this)(x, y) = c;
+					total_set++;
+					if (pSet_pixels) 
+						pSet_pixels->push_back(pixel_coord(x, y));
+				}
+				FLOOD_PUSH(y, l, x - 1, dy);
+
+				if (x > (x2 + 1))
+					FLOOD_PUSH(y, x2 + 1, x - 1, -dy);
+
+			skip:	    
+				for (x++; x <= x2 && !flood_fill_is_inside(x, y, b); x++)
+					;
+
+				l = x;
+			} while (x <= x2);
+		}
+
+		return total_set;
 	}
 
 private:
@@ -724,6 +836,35 @@ void strip_extension(std::string& s);
 void strip_path(std::string& s);
 
 uint32_t hash_hsieh(const uint8_t* pBuf, size_t len);
+
+class tracked_stat
+{
+public:
+	tracked_stat() { clear(); }
+
+	void clear() { m_num = 0; m_total = 0; m_total2 = 0; }
+
+	void update(uint32_t val) { m_num++; m_total += val; m_total2 += val * val; }
+
+	tracked_stat& operator += (uint32_t val) { update(val); return *this; }
+
+	uint32_t get_number_of_values() { return m_num; }
+	uint64_t get_total() const { return m_total; }
+	uint64_t get_total2() const { return m_total2; }
+
+	float get_average() const { return m_num ? (float)m_total / m_num : 0.0f; };
+	float get_std_dev() const { return m_num ? sqrtf((float)(m_num * m_total2 - m_total * m_total)) / m_num : 0.0f; }
+	float get_variance() const { float s = get_std_dev(); return s * s; }
+
+private:
+	uint32_t m_num;
+	uint64_t m_total;
+	uint64_t m_total2;
+};
+
+float compute_block_max_std_dev(const color_quad_u8* pPixels, uint32_t block_width, uint32_t block_height, uint32_t num_comps);
+
+} // namespace utils
 
 #ifdef _MSC_VER
 #pragma warning (pop)

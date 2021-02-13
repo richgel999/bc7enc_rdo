@@ -4,6 +4,7 @@
 #include <math.h>
 
 #define ERT_FAVOR_CONT_AND_REP0_MATCHES (1)
+#define ERT_USE_HASH_TABLE (1)
 
 namespace ert
 {
@@ -198,11 +199,68 @@ namespace ert
 		return total_err * (one_over_total_color_weight / total_block_pixels);
 	}
 
+	uint32_t hash_hsieh(const uint8_t* pBuf, size_t len, uint32_t salt)
+	{
+		if (!pBuf || !len)
+			return 0;
+
+		uint32_t h = static_cast<uint32_t>(len + (salt << 16));
+
+		const uint32_t bytes_left = len & 3;
+		len >>= 2;
+
+		while (len--)
+		{
+			const uint16_t* pWords = reinterpret_cast<const uint16_t*>(pBuf);
+
+			h += pWords[0];
+
+			const uint32_t t = (pWords[1] << 11) ^ h;
+			h = (h << 16) ^ t;
+
+			pBuf += sizeof(uint32_t);
+
+			h += h >> 11;
+		}
+
+		switch (bytes_left)
+		{
+		case 1:
+			h += *reinterpret_cast<const signed char*>(pBuf);
+			h ^= h << 10;
+			h += h >> 1;
+			break;
+		case 2:
+			h += *reinterpret_cast<const uint16_t*>(pBuf);
+			h ^= h << 11;
+			h += h >> 17;
+			break;
+		case 3:
+			h += *reinterpret_cast<const uint16_t*>(pBuf);
+			h ^= h << 16;
+			h ^= (static_cast<signed char>(pBuf[sizeof(uint16_t)])) << 18;
+			h += h >> 11;
+			break;
+		default:
+			break;
+		}
+
+		h ^= h << 3;
+		h += h >> 5;
+		h ^= h << 4;
+		h += h >> 17;
+		h ^= h << 25;
+		h += h >> 6;
+
+		return h;
+	}
+
 	// BC7 entropy reduction transform with Deflate/LZMA/LZHAM optimizations
 	bool reduce_entropy(void* pBlocks, uint32_t num_blocks,
 		uint32_t total_block_stride_in_bytes, uint32_t block_size_to_optimize_in_bytes, uint32_t block_width, uint32_t block_height, uint32_t num_comps,
 		const color_rgba* pBlock_pixels, const reduce_entropy_params& params, uint32_t& total_modified,
-		pUnpack_block_func pUnpack_block_func, void* pUnpack_block_func_user_data)
+		pUnpack_block_func pUnpack_block_func, void* pUnpack_block_func_user_data,
+		std::vector<float>* pBlock_mse_scales)
 	{
 		const uint32_t MAX_BLOCK_PIXELS = 12 * 12;
 		const uint32_t MAX_BLOCK_SIZE_IN_BYTES = 256;
@@ -241,9 +299,21 @@ namespace ert
 		std::vector<uint32_t> len_hist(MAX_BLOCK_SIZE_IN_BYTES + 1);
 
 		int prev_match_window_ofs_to_favor_cont = -1, prev_match_window_ofs_to_favor_rep0 = -1, prev_match_distance = -1;
+				
+		uint32_t total_smooth_blocks = 0;
+
+#if ERT_USE_HASH_TABLE
+		const uint32_t HASH_SIZE = 8192;
+		uint32_t hash[HASH_SIZE];
+#endif
 
 		for (uint32_t block_index = 0; block_index < num_blocks; block_index++)
 		{
+#if ERT_USE_HASH_TABLE
+			if ((block_index & 0xFF) == 0)
+				memset(hash, 0, sizeof(hash));
+#endif
+
 			uint8_t* pOrig_block = &pBlock_bytes[block_index * total_block_stride_in_bytes];
 			const color_rgba* pPixels = &pBlock_pixels[block_index * total_block_pixels];
 
@@ -257,12 +327,23 @@ namespace ert
 				continue;
 
 			const float max_std_dev = compute_block_max_std_dev(pPixels, block_width, block_height, num_comps);
-
+			
 			float yl = clampf(max_std_dev / params.m_max_smooth_block_std_dev, 0.0f, 1.0f);
 			yl = yl * yl;
-			const float smooth_block_error_scale = lerp(params.m_smooth_block_max_mse_scale, 1.0f, yl);
+			float smooth_block_mse_scale = lerp(params.m_smooth_block_max_mse_scale, 1.0f, yl);
 
-			float cur_t = cur_mse * smooth_block_error_scale + (LITERAL_BITS * block_size_to_optimize_in_bytes) * params.m_lambda;
+			if (pBlock_mse_scales)
+			{
+				if ((*pBlock_mse_scales)[block_index] > 0.0f)
+				{
+					smooth_block_mse_scale = (*pBlock_mse_scales)[block_index];
+				}
+			}
+			
+			if (smooth_block_mse_scale > 1.0f)
+				total_smooth_blocks++;
+						
+			float cur_t = cur_mse * smooth_block_mse_scale + (LITERAL_BITS * block_size_to_optimize_in_bytes) * params.m_lambda;
 
 			int first_block_to_check = std::max<int>(0, block_index - total_blocks_to_check);
 			int last_block_to_check = block_index - 1;
@@ -273,8 +354,9 @@ namespace ert
 			float best_t = cur_t;
 			uint32_t best_match_len = 0, best_match_src_window_ofs = 0, best_match_dst_window_ofs = 0, best_match_src_block_ofs = 0, best_match_dst_block_ofs = 0;
 
+			// Don't let thresh_ms_err be 0 to let zero error blocks have slightly increased distortion
 			const float thresh_ms_err = params.m_max_allowed_rms_increase_ratio * params.m_max_allowed_rms_increase_ratio * std::max(cur_mse, 1.0f);
-
+									
 			for (int prev_block_index = last_block_to_check; prev_block_index >= first_block_to_check; --prev_block_index)
 			{
 				const uint8_t* pPrev_blk = &pBlock_bytes[prev_block_index * total_block_stride_in_bytes];
@@ -297,7 +379,11 @@ namespace ert
 
 								const uint32_t match_dist = dst_match_window_ofs - src_match_window_ofs;
 																								
-								float trial_bits = (block_size_to_optimize_in_bytes - len) * LITERAL_BITS + compute_match_cost_estimate(match_dist, len);
+								float trial_bits;
+
+#if ERT_USE_HASH_TABLE
+								uint32_t hs = hash_hsieh(pPrev_blk + src_ofs, len, dst_ofs);
+#endif
 
 #if ERT_FAVOR_CONT_AND_REP0_MATCHES
 								// Continue a previous match (which would cross block boundaries)
@@ -310,10 +396,34 @@ namespace ert
 								{
 									trial_bits = (block_size_to_optimize_in_bytes - len) * LITERAL_BITS + MATCH_REP0_BITS;
 								}
+								else
+								{
+									trial_bits = (block_size_to_optimize_in_bytes - len) * LITERAL_BITS + compute_match_cost_estimate(match_dist, len);
+#if ERT_USE_HASH_TABLE
+									uint32_t hash_check = hash[hs & (HASH_SIZE - 1)];
+									if ((hash_check & 0xFF) == (block_index & 0xFF))
+									{
+										if ((hash_check >> 8) == (hs >> 8))
+											continue;
+									}
 #endif
-								
+								}
+#else
+#if ERT_USE_HASH_TABLE
+								uint32_t hash_check = hash[hs & (HASH_SIZE - 1)];
+								if ((hash_check & 0xFF) == (block_index & 0xFF))
+								{
+									if ((hash_check >> 8) == (hs >> 8))
+										continue;
+								}
+#endif
+#endif
+#if ERT_USE_HASH_TABLE
+								hash[hs & (HASH_SIZE - 1)] = (hs & 0xFFFFFF00) | (block_index & 0xFF);
+#endif
+
 								const float trial_bits_times_lambda = trial_bits * params.m_lambda;
-																
+																																
 								uint8_t trial_block[MAX_BLOCK_SIZE_IN_BYTES];
 								memcpy(trial_block, pOrig_block, block_size_to_optimize_in_bytes);
 								memcpy(trial_block + dst_ofs, pPrev_blk + src_ofs, len);
@@ -326,7 +436,8 @@ namespace ert
 
 								if (trial_mse < thresh_ms_err)
 								{
-									float t = trial_mse * smooth_block_error_scale + trial_bits_times_lambda;
+									float t = trial_mse * smooth_block_mse_scale + trial_bits_times_lambda;
+
 									if (t < best_t)
 									{
 										best_t = t;
@@ -359,6 +470,10 @@ namespace ert
 
 							float trial_bits_times_lambda_to_use = trial_bits_times_lambda;
 
+#if ERT_USE_HASH_TABLE							
+							uint32_t hs = hash_hsieh(pPrev_blk + ofs, len, ofs);
+#endif
+
 #if ERT_FAVOR_CONT_AND_REP0_MATCHES
 							// Continue a previous match (which would cross block boundaries)
 							if ((int)src_match_window_ofs == prev_match_window_ofs_to_favor_cont)
@@ -372,6 +487,30 @@ namespace ert
 								float continue_match_trial_bits = (block_size_to_optimize_in_bytes - len) * LITERAL_BITS + MATCH_REP0_BITS;
 								trial_bits_times_lambda_to_use = continue_match_trial_bits * params.m_lambda;
 							}
+							else
+							{
+#if ERT_USE_HASH_TABLE
+								uint32_t hash_check = hash[hs & (HASH_SIZE - 1)];
+								if ((hash_check & 0xFF) == (block_index & 0xFF))
+								{
+									if ((hash_check >> 8) == (hs >> 8))
+										continue;
+								}
+#endif
+							}
+#else
+#if ERT_USE_HASH_TABLE
+							uint32_t hash_check = hash[hs & (HASH_SIZE - 1)];
+							if ((hash_check & 0xFF) == (block_index & 0xFF))
+							{
+								if ((hash_check >> 8) == (hs >> 8))
+									continue;
+							}
+#endif
+#endif
+
+#if ERT_USE_HASH_TABLE
+							hash[hs & (HASH_SIZE - 1)] = (hs & 0xFFFFFF00) | (block_index & 0xFF);
 #endif
 
 							uint8_t trial_block[MAX_BLOCK_SIZE_IN_BYTES];
@@ -386,7 +525,8 @@ namespace ert
 
 							if (trial_mse < thresh_ms_err)
 							{
-								float t = trial_mse * smooth_block_error_scale + trial_bits_times_lambda_to_use;
+								float t = trial_mse * smooth_block_mse_scale + trial_bits_times_lambda_to_use;
+								
 								if (t < best_t)
 								{
 									best_t = t;
@@ -444,6 +584,8 @@ namespace ert
 
 		if (params.m_debug_output)
 		{
+			printf("Total smooth blocks: %3.2f%%\n", total_smooth_blocks * 100.0f / num_blocks);
+
 			printf("Match length histogram:\n");
 			for (uint32_t i = MIN_MATCH_LEN; i <= block_size_to_optimize_in_bytes; i++)
 				printf("%u%c", len_hist[i], (i < block_size_to_optimize_in_bytes) ? ',' : '\n');
