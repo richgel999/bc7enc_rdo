@@ -1,4 +1,4 @@
-bc7enc - Fast BC1-7 GPU texture encoders with optional Rate Distortion Optimization (RDO)
+bc7enc - Fast BC1-7 GPU texture encoders with Rate Distortion Optimization (RDO)
 
 This repo contains fast texture encoders for BC1-7. All formats support a simple post-processing transform on the encoded texture data designed to trade off quality for smaller compressed file sizes using LZ compression. Significant (10-50%) size reductions are possible. The BC7 encoder also supports a "reduced entropy" mode using the -e option which causes the output to be biased/weighted in various ways which minimally impact quality, which results in 5-10% smaller file sizes with no slowdowns in encoding time.
 
@@ -9,6 +9,8 @@ You can see examples of the RDO BC7 encoder's current output [here](https://rich
 This repo contains both [bc7e.ispc](https://github.com/BinomialLLC/bc7e) and its distantly related but weaker 4 mode only non-ispc variant, bc7enc.cpp. The -U command line option enables bc7e.ispc, otherwise you get bc7enc.cpp. bc7e supports all BC7 modes and features, but doesn't yet support reduced entropy BC7 encoding. bc7enc.cpp supports optional reduced entropy encoding (using -e with the command line tool). RDO BC7 is supported when using either encoder, however. 
 
 The next major focus will be improving the default smooth block handling and improving rate distorton performance.
+
+This repo was originally derived from [bc7enc](https://github.com/richgel999/bc7enc).
 
 ### Compiling
 
