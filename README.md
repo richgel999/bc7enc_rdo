@@ -14,7 +14,7 @@ This repo was originally derived from [bc7enc](https://github.com/richgel999/bc7
 
 ### Compiling
 
-The cmake file has been tested with MSVC 2019 x64 and clang 6.0.0 under Ubuntu v18.04.
+This build has been tested with MSVC 2019 x64 and clang 6.0.0 under Ubuntu v18.04.
 
 To compile with bc7e.ispc (on Linux this requires [Intel's ISPC compiler](https://ispc.github.io/downloads.html) to be in your path - recommended):
 
