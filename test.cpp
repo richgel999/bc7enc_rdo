@@ -503,7 +503,7 @@ int main(int argc, char *argv[])
 					else if (strncmp(pArg, "-zc", 3) == 0)
 					{
 						m_lookback_window_size = atoi(pArg + 3);
-						m_lookback_window_size = std::min<int>(std::max<int>(m_lookback_window_size, 16), 65536*2);
+						m_lookback_window_size = std::min<int>(std::max<int>(m_lookback_window_size, 8), 65536*2);
 						custom_lookback_window_size = true;
 					}
 					else if (strncmp(pArg, "-zv", 3) == 0)
@@ -781,7 +781,7 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
-		printf("BC1 level: %u, use 3-color mode: %u, use 3-color mode for black: %u, bc1_mode: %u\nrdo_q: %f\nm_lookback_window_size: %u, rdo_smooth_block_error_scale: %f\n", 
+		printf("BC1 level: %u, use 3-color mode: %u, use 3-color mode for black: %u, bc1_mode: %u\nrdo_q: %f, lookback_window_size: %u, rdo_smooth_block_error_scale: %f\n", 
 			bc1_quality_level, use_bc1_3color_mode, use_bc1_3color_mode_for_black, (int)bc1_mode, rdo_lambda, m_lookback_window_size, rdo_smooth_block_error_scale);
 	}
 
@@ -1058,6 +1058,8 @@ int main(int argc, char *argv[])
 
 		if (dxgi_format == DXGI_FORMAT_BC7_UNORM)
 		{
+			ert_p.m_lookback_window_size = std::max(16U, m_lookback_window_size);
+
 			// BC7 RDO
 			const uint32_t NUM_COMPONENTS = 4;
 
@@ -1146,6 +1148,8 @@ int main(int argc, char *argv[])
 		{
 			// BC5 RDO - One BC4 block for R followed by one BC4 block for G
 
+			ert_p.m_lookback_window_size = std::max(16U, m_lookback_window_size);
+			
 			std::vector<rgbcx::color32> block_pixels_r(total_blocks * 16), block_pixels_g(total_blocks * 16);
 
 			for (uint32_t by = 0; by < blocks_y; by++)
@@ -1344,6 +1348,9 @@ int main(int argc, char *argv[])
 		else if (dxgi_format == DXGI_FORMAT_BC3_UNORM)
 		{
 			// BC3 RDO - One BC4 block followed by one BC1 block
+			
+			ert_p.m_lookback_window_size = std::max(16U, m_lookback_window_size);
+
 			std::vector<rgbcx::color32> block_pixels_a(total_blocks * 16);
 
 			for (uint32_t by = 0; by < blocks_y; by++)
