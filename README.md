@@ -12,18 +12,37 @@ The next major focus will be improving the default smooth block handling, and ad
 
 ### Compiling
 
-To compile (tested MSVC 2019 x64 and clang 6.0.0):
+To compile with BC7E.ispc (requires [Intel's ISPC compiler](https://ispc.github.io/downloads.html) to be in your path - recommended):
+
+```
+cmake -D SUPPORT_BC7E=TRUE .
+make
+```
+
+To compile without BC7E (tested with MSVC 2019 x64 and clang 6.0.0 under Ubuntu v18.04):
 
 ```
 cmake .
 make
 ```
 
-Note the MSVC build enables OpenMP for faster compression.
+Note the MSVC build and Linux builds enable OpenMP for faster compression.
 
 ### Examples
 
-To encode to non-RDO BC7 using entropy reduced or quantized/weighted BC7 (super fast, slightly reduced quality, but 5-10% better LZ compression):
+To encode to non-RDO BC7 using BC7E, highest quality, perceptual metrics:
+
+```
+./bc7enc blah.png -U -u6
+```
+
+To encode to RDO BC7 using BC7E, highest quality, lambda=.5, linear metrics (perceptual is always automatically disabled with -z is specified):
+
+```
+./bc7enc blah.png -U -u6 -z.5
+```
+
+To encode to non-RDO BC7 using entropy reduced or quantized/weighted BC7 (super fast, slightly reduced quality, but 5-10% better LZ compression, only uses 2 or 4 BC7 modes):
 
 ```
 ./bc7enc blah.png -e
