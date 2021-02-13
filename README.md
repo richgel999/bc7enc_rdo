@@ -59,6 +59,12 @@ To encode to RDO BC7 using the entropy reduction transform at higher effectivene
 ./bc7enc -zc1024 blah.png -z2.0 -zb30.0
 ```
 
+To encode to RDO BC7 using the entropy reduction transform at higher effectivenes using a larger window size, using only mode 6 (more block artifacts, but better rate-distortion performance as measured by PSNR):
+
+```
+./bc7enc -zc1024 blah.png -6 -z1.0 -e
+```
+
 To encode to BC1:
 ```
 ./bc7enc -1 blah.png
