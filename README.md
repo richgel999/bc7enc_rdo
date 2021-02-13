@@ -35,13 +35,19 @@ To encode to RDO BC7 using the entropy reduction transform combined with reduced
 ./bc7enc -zc256 blah.png -e -z1.0
 ```
 
+Same, except disable ultra-smooth block handling:
+
+```
+./bc7enc -zc256 blah.png -e -z1.0 -zu
+```
+
 To encode to RDO BC7 using the entropy reduction transform at lower quality, combined with reduced entropy BC7 encoding, with a slightly larger window size than the default which is 128 bytes:
 
 ```
 ./bc7enc -zc256 blah.png -e -z2.0
 ```
 
-To encode to RDO BC7 using the entropy reduction transform at higher effectivenes using a larger window size:
+To encode to RDO BC7 using the entropy reduction transform at higher effectivenes using a larger window size, without using reduced entropy BC7 encoding:
 
 ```
 ./bc7enc -zc1024 blah.png -z1.0
