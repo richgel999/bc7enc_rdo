@@ -34,7 +34,13 @@ Note the MSVC build and Linux builds enable OpenMP for faster compression.
 
 ### Examples
 
-To encode to non-RDO BC7 using BC7E, highest quality, perceptual metrics:
+To encode to non-RDO BC7 using BC7E, highest quality, using perceptual (scaled YCbCr) colorspace error metrics:
+
+```
+./bc7enc blah.png -U -u6 -s
+```
+
+To encode to non-RDO BC7 using BC7E, highest quality, linear RGB(A) metrics:
 
 ```
 ./bc7enc blah.png -U -u6
