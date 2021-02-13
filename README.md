@@ -50,7 +50,7 @@ To encode to RDO BC7 using BC7E, high quality, lambda=.5, linear metrics, with s
 ./bc7enc blah.png -U -u4 -z.5 -zc16
 ```
 
-To encode to non-RDO BC7 using entropy reduced or quantized/weighted BC7 (super fast, slightly reduced quality, but 5-10% better LZ compression, only uses 2 or 4 BC7 modes):
+To encode to non-RDO BC7 using entropy reduced or quantized/weighted BC7 (no slowdown vs. non-RDO bc7enc, slightly reduced quality, but 5-10% better LZ compression, only uses 2 or 4 BC7 modes):
 
 ```
 ./bc7enc blah.png -e
