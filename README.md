@@ -4,7 +4,7 @@ This repo contains fast texture encoders for BC1-7. All formats support a simple
 
 Currently, the entropy reduction transform is tuned for Deflate, LZHAM, or LZMA. The method used to control the rate distortion tradeoff is the Lagrangian multiplier method. Rate is approximated. The post-processing transform applied to the encoded texture data tries to introduce the longest match it can into every encoded output block. It also tries to continue matches between blocks and (specifically for codecs like LZHAM/LZMA/Zstd) it tries to utilize REP0 (repeat) matches.
 
-You can see examples of the RDO BC7 encoder's current output [here](https://richg42.blogspot.com/2021/02/more-rdo-bc7-encoding.html). Some examples on how to use the command line tool for various BC7 modes are on my blog, [here](https://richg42.blogspot.com/2021/02/how-to-use-bc7encrdo.html).
+You can see examples of the RDO BC7 encoder's current output [here](https://richg42.blogspot.com/2021/02/more-rdo-bc7-encoding.html). Some examples on how to use the command line tool are on my blog, [here](https://richg42.blogspot.com/2021/02/how-to-use-bc7encrdo.html).
 
 This repo contains both [bc7e.ispc](https://github.com/BinomialLLC/bc7e) and its distantly related but weaker 4 mode only non-ispc variant, bc7enc.cpp. The -U command line option enables bc7e.ispc, otherwise you get bc7enc.cpp. bc7e supports all BC7 modes and features, but doesn't yet support reduced entropy BC7 encoding. bc7enc.cpp supports optional reduced entropy encoding (using -e with the command line tool). RDO BC7 is supported when using either encoder, however. 
 
