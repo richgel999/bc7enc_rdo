@@ -135,9 +135,9 @@ For even higher quality per bit (this is incredibly slow):
 ```
 
 ### Dependencies
-There are no 3rd party code or library dependencies. utils.cpp/.h is only needed by the example command line tool. It uses C++11 (although it's mostly C++03).
+There are no 3rd party code or library dependencies. utils.cpp/.h is only needed by the example command line tool. It uses C++11.
 
-For RDO post-processing of any block-based format: ert.cpp/.h. You'll need to supply a block decoder function for your format as a callback. It must return false if the passed in block data is invalid.
+For RDO post-processing of any block-based format: ert.cpp/.h. You'll need to supply a block decoder function for your format as a callback. It must return false if the passed in block data is invalid. This transform should work on other texture formats, such as ETC1/2, EAC, and ASTC.
 
 For BC1-5 encoding/decoding: rgbcx.cpp/.h
 
