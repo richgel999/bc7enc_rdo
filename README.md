@@ -109,17 +109,17 @@ To encode to BC1 with RDO, with RDO debug output, to monitor the percentage of b
 ./bc7enc -1 -z1.0 -zd blah.png
 ```
 
-To encode to BC1 with RDO with a higher then default smooth block scale factor (which is 10.0):
+To encode to BC1 with RDO with a higher then default smooth block scale factor:
 ```
-./bc7enc -1 -z1.0 -zb20.0 blah.png
+./bc7enc -1 -z1.0 -zb40.0 blah.png
 ```
 
 Use -zb1.0 to disable smooth block error scaling completely, which increases RDO performance but can result in noticeable artifacts on smooth/flat blocks at higher lambdas.
 
-Use -zc# to control the RDO window size in bytes. Good values are 128-8192. 
-Use -zt to disable RDO multithreading. Currently, OpenMP is enabled in MSVC builds, but not in other builds.
+Use -zc# to control the RDO window size in bytes. Good values to try are 16-8192. 
+Use -zt to disable RDO multithreading. 
 
-To encode to BC1 with RDO at the highest achievable quality/effectiveness (this is extremely slower):
+To encode to BC1 with RDO at the highest achievable quality/effectiveness (this is extremely slow):
 
 ```
 ./bc7enc -1 -z1.0 -zc32768 blah.png
@@ -127,7 +127,10 @@ To encode to BC1 with RDO at the highest achievable quality/effectiveness (this 
 
 This sets the window size to 32KB (the highest setting that makes sense for Deflate). Window sizes of 2KB (the default) to 8KB are way faster and in practice are almost as effective. The maximum window size setting supported by the command line tool is 64KB, but this would be very slow.
 
-RDO mode is supported for all the BC formats. The command line tool uses the same value of lambda for all blocks.
+For even higher quality per bit (this is incredibly slow):
+```
+./bc7enc -1 -z1.0 -zc32768 -zm blah.png
+```
 
 ### Dependencies
 There are no 3rd party code or library dependencies. utils.cpp/.h is only needed by the example command line tool. It uses C++11 (although it's mostly C++03).
