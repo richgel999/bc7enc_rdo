@@ -109,13 +109,27 @@ namespace ert
 
 		if ((block_width == 4) && (block_height == 4) && (num_comps == 4))
 		{
-			for (uint32_t y = 0; y < 4; y++)
+			if ((weights[0] == 1) && (weights[1] == 1) && (weights[2] == 1) && (weights[3] == 1))
 			{
-				const uint32_t y_ofs = y * 4;
-				for (uint32_t x = 0; x < 4; x++)
+				for (uint32_t i = 0; i < 16; i++)
 				{
-					const color_rgba* pA = pPixelsA + x + y_ofs;
-					const color_rgba* pB = pPixelsB + x + y_ofs;
+					const color_rgba* pA = pPixelsA + i;
+					const color_rgba* pB = pPixelsB + i;
+
+					const int dr = pA->m_c[0] - pB->m_c[0];
+					const int dg = pA->m_c[1] - pB->m_c[1];
+					const int db = pA->m_c[2] - pB->m_c[2];
+					const int da = pA->m_c[3] - pB->m_c[3];
+
+					total_err += dr * dr + dg * dg + db * db + da * da;
+				}
+			}
+			else
+			{
+				for (uint32_t i = 0; i < 16; i++)
+				{
+					const color_rgba* pA = pPixelsA + i;
+					const color_rgba* pB = pPixelsB + i;
 
 					const int dr = pA->m_c[0] - pB->m_c[0];
 					const int dg = pA->m_c[1] - pB->m_c[1];

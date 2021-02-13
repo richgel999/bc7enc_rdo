@@ -3,11 +3,15 @@
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 
-#define BC7ENC_VERSION "1.05"
+#define BC7ENC_VERSION "1.06"
 
 #define LZHAM_STATS (0)
 #define DECODE_BC4_TO_GRAYSCALE (0)
 #define COMPUTE_SSIM (0)
+
+#ifndef SUPPORT_BC7E
+#define SUPPORT_BC7E (0)
+#endif
 
 #if _OPENMP
 #include <omp.h>
@@ -23,6 +27,10 @@
 #include "rgbcx.h"
 
 #include "miniz.h"
+
+#if SUPPORT_BC7E
+#include "bc7e_ispc.h"
+#endif
 
 using namespace utils;
 
@@ -289,6 +297,8 @@ int main(int argc, char *argv[])
 	bool rdo_multithreading = true;
 
 	bool bc7_reduce_entropy = false;
+
+	bool use_bc7e = false;
 			
 	FILE* pCSV_file = nullptr;
 			
@@ -299,6 +309,11 @@ int main(int argc, char *argv[])
 		{
 			switch (pArg[1])
 			{
+				case 'U':
+				{
+					use_bc7e = true;
+					break;
+				}
 				case 'e':
 				{
 					bc7_reduce_entropy = true;
@@ -391,7 +406,7 @@ int main(int argc, char *argv[])
 				case 'u':
 				{
 					bc7_uber_level = atoi(pArg + 2);
-					if ((bc7_uber_level < 0) || (bc7_uber_level > BC7ENC_MAX_UBER_LEVEL))
+					if ((bc7_uber_level < 0) || (bc7_uber_level > 6)) //BC7ENC_MAX_UBER_LEVEL))
 					{
 						fprintf(stderr, "Invalid argument: %s\n", pArg);
 						return EXIT_FAILURE;
@@ -488,7 +503,7 @@ int main(int argc, char *argv[])
 					else if (strncmp(pArg, "-zc", 3) == 0)
 					{
 						m_lookback_window_size = atoi(pArg + 3);
-						m_lookback_window_size = std::min<int>(std::max<int>(m_lookback_window_size, 32), 65536*2);
+						m_lookback_window_size = std::min<int>(std::max<int>(m_lookback_window_size, 16), 65536*2);
 						custom_lookback_window_size = true;
 					}
 					else if (strncmp(pArg, "-zv", 3) == 0)
@@ -720,11 +735,49 @@ int main(int argc, char *argv[])
 			bc7_pack_params.m_pbit1_weight = 1.3f;
 		}
 	} 
-			
+
+#if SUPPORT_BC7E
+	ispc::bc7e_compress_block_init();
+
+	// Now initialize the BC7 compressor's parameters.
+	ispc::bc7e_compress_block_params pack_params;
+	memset(&pack_params, 0, sizeof(pack_params));
+	switch (bc7_uber_level)
+	{
+	case 0:
+		ispc::bc7e_compress_block_params_init_ultrafast(&pack_params, perceptual);
+		break;
+	case 1:
+		ispc::bc7e_compress_block_params_init_veryfast(&pack_params, perceptual);
+		break;
+	case 2:
+		ispc::bc7e_compress_block_params_init_fast(&pack_params, perceptual);
+		break;
+	case 3:
+		ispc::bc7e_compress_block_params_init_basic(&pack_params, perceptual);
+		break;
+	case 4:
+		ispc::bc7e_compress_block_params_init_slow(&pack_params, perceptual);
+		break;
+	case 5:
+		ispc::bc7e_compress_block_params_init_veryslow(&pack_params, perceptual);
+		break;
+	case 6:
+	default:
+		ispc::bc7e_compress_block_params_init_slowest(&pack_params, perceptual);
+		break;
+	}
+#endif
+
 	if (dxgi_format == DXGI_FORMAT_BC7_UNORM)
 	{
-		printf("\nbc7enc parameters:\n");
-		bc7_pack_params.print();
+		if ((SUPPORT_BC7E) && (use_bc7e))
+			printf("BC7E uber level: %u, perceptual: %u\n", bc7_uber_level, perceptual);
+		else
+		{
+			printf("\nbc7enc parameters:\n");
+			bc7_pack_params.print();
+		}
 	}
 	else
 	{
@@ -744,87 +797,141 @@ int main(int argc, char *argv[])
 	uint32_t bc7_mode_hist[8];
 	memset(bc7_mode_hist, 0, sizeof(bc7_mode_hist));
 
-#pragma omp parallel for
-	for (int by = 0; by < (int)blocks_y; by++)
+#if SUPPORT_BC7E
+	if ((dxgi_format == DXGI_FORMAT_BC7_UNORM) && (use_bc7e))
 	{
-		for (uint32_t bx = 0; bx < blocks_x; bx++)
+		printf("Using bc7e: ");
+
+#pragma omp parallel for
+		for (int32_t by = 0; by < static_cast<int32_t>(blocks_y); by++)
 		{
-			color_quad_u8 pixels[16];
+			// Process 64 blocks at a time, for efficient SIMD processing.
+			// Ideally, N >= 8 (or more) and (N % 8) == 0.
+			const int N = 64;
 
-			source_image.get_block(bx, by, 4, 4, pixels);
-						
-			switch (dxgi_format)
+			for (uint32_t bx = 0; bx < blocks_x; bx += N)
 			{
-			case DXGI_FORMAT_BC1_UNORM:
-			{
-				block8* pBlock = &packed_image8[bx + by * blocks_x];
+				const uint32_t num_blocks_to_process = std::min<uint32_t>(blocks_x - bx, N);
 
-				rgbcx::encode_bc1(bc1_quality_level, pBlock, &pixels[0].m_c[0], use_bc1_3color_mode, use_bc1_3color_mode_for_black);
-				break;
-			}
-			case DXGI_FORMAT_BC3_UNORM:
-			{
+				color_quad_u8 pixels[16 * N];
+
+				// Extract num_blocks_to_process 4x4 pixel blocks from the source image and put them into the pixels[] array.
+				for (uint32_t b = 0; b < num_blocks_to_process; b++)
+					source_image.get_block(bx + b, by, 4, 4, pixels + b * 16);
+
+				// Compress the blocks to BC7.
+				// Note: If you've used Intel's ispc_texcomp, the input pixels are different. BC7E requires a pointer to an array of 16 pixels for each block.
 				block16* pBlock = &packed_image16[bx + by * blocks_x];
+				ispc::bc7e_compress_blocks(num_blocks_to_process, reinterpret_cast<uint64_t*>(pBlock), reinterpret_cast<const uint32_t*>(pixels), &pack_params);
+			}
 
-				if (use_hq_bc345)
-					rgbcx::encode_bc3_hq(bc1_quality_level, pBlock, &pixels[0].m_c[0], bc345_search_rad, bc345_mode_mask);
-				else
-					rgbcx::encode_bc3(bc1_quality_level, pBlock, &pixels[0].m_c[0]);
-				break;
-			}
-			case DXGI_FORMAT_BC4_UNORM:
-			{
-				block8* pBlock = &packed_image8[bx + by * blocks_x];
-
-				if (use_hq_bc345)
-					rgbcx::encode_bc4_hq(pBlock, &pixels[0].m_c[bc45_channel0], 4, bc345_search_rad, bc345_mode_mask);
-				else
-					rgbcx::encode_bc4(pBlock, &pixels[0].m_c[bc45_channel0], 4);
-				break;
-			}
-			case DXGI_FORMAT_BC5_UNORM:
-			{
-				block16* pBlock = &packed_image16[bx + by * blocks_x];
-
-				if (use_hq_bc345)
-					rgbcx::encode_bc5_hq(pBlock, &pixels[0].m_c[0], bc45_channel0, bc45_channel1, 4, bc345_search_rad, bc345_mode_mask);
-				else
-					rgbcx::encode_bc5(pBlock, &pixels[0].m_c[0], bc45_channel0, bc45_channel1, 4);
-				break;
-			}
-			case DXGI_FORMAT_BC7_UNORM:
-			{
-				block16* pBlock = &packed_image16[bx + by * blocks_x];
-																
-				bc7enc_compress_block(pBlock, pixels, &bc7_pack_params);
-
-#pragma omp critical
-				{
-					uint32_t mode = ((uint8_t*)pBlock)[0];
-					for (uint32_t m = 0; m <= 7; m++)
-					{
-						if (mode & (1 << m))
-						{
-							bc7_mode_hist[m]++;
-							break;
-						}
-					}
-				}
-
-				break;
-			}
-			default:
-			{
-				assert(0);
-				break;
-			}
-			}
+			if ((by & 63) == 0)
+				printf(".");
 		}
 
-		if ((by & 127) == 0)
-			printf(".");
+		for (int by = 0; by < (int)blocks_y; by++)
+		{
+			for (uint32_t bx = 0; bx < blocks_x; bx++)
+			{
+				block16* pBlock = &packed_image16[bx + by * blocks_x];
+
+				uint32_t mode = ((uint8_t*)pBlock)[0];
+				for (uint32_t m = 0; m <= 7; m++)
+				{
+					if (mode & (1 << m))
+					{
+						bc7_mode_hist[m]++;
+						break;
+					}
+				}
+			}
+		}
 	}
-	
+	else
+#endif
+	{
+#pragma omp parallel for
+		for (int by = 0; by < (int)blocks_y; by++)
+		{
+			for (uint32_t bx = 0; bx < blocks_x; bx++)
+			{
+				color_quad_u8 pixels[16];
+
+				source_image.get_block(bx, by, 4, 4, pixels);
+
+				switch (dxgi_format)
+				{
+				case DXGI_FORMAT_BC1_UNORM:
+				{
+					block8* pBlock = &packed_image8[bx + by * blocks_x];
+
+					rgbcx::encode_bc1(bc1_quality_level, pBlock, &pixels[0].m_c[0], use_bc1_3color_mode, use_bc1_3color_mode_for_black);
+					break;
+				}
+				case DXGI_FORMAT_BC3_UNORM:
+				{
+					block16* pBlock = &packed_image16[bx + by * blocks_x];
+
+					if (use_hq_bc345)
+						rgbcx::encode_bc3_hq(bc1_quality_level, pBlock, &pixels[0].m_c[0], bc345_search_rad, bc345_mode_mask);
+					else
+						rgbcx::encode_bc3(bc1_quality_level, pBlock, &pixels[0].m_c[0]);
+					break;
+				}
+				case DXGI_FORMAT_BC4_UNORM:
+				{
+					block8* pBlock = &packed_image8[bx + by * blocks_x];
+
+					if (use_hq_bc345)
+						rgbcx::encode_bc4_hq(pBlock, &pixels[0].m_c[bc45_channel0], 4, bc345_search_rad, bc345_mode_mask);
+					else
+						rgbcx::encode_bc4(pBlock, &pixels[0].m_c[bc45_channel0], 4);
+					break;
+				}
+				case DXGI_FORMAT_BC5_UNORM:
+				{
+					block16* pBlock = &packed_image16[bx + by * blocks_x];
+
+					if (use_hq_bc345)
+						rgbcx::encode_bc5_hq(pBlock, &pixels[0].m_c[0], bc45_channel0, bc45_channel1, 4, bc345_search_rad, bc345_mode_mask);
+					else
+						rgbcx::encode_bc5(pBlock, &pixels[0].m_c[0], bc45_channel0, bc45_channel1, 4);
+					break;
+				}
+				case DXGI_FORMAT_BC7_UNORM:
+				{
+					block16* pBlock = &packed_image16[bx + by * blocks_x];
+
+					bc7enc_compress_block(pBlock, pixels, &bc7_pack_params);
+
+#pragma omp critical
+					{
+						uint32_t mode = ((uint8_t*)pBlock)[0];
+						for (uint32_t m = 0; m <= 7; m++)
+						{
+							if (mode & (1 << m))
+							{
+								bc7_mode_hist[m]++;
+								break;
+							}
+						}
+					}
+
+					break;
+				}
+				default:
+				{
+					assert(0);
+					break;
+				}
+				}
+			}
+
+			if ((by & 127) == 0)
+				printf(".");
+		}
+	}
+
 	clock_t end_t = clock();
 	
 	printf("\nTotal encoding time: %f secs\n", (double)(end_t - start_t) / CLOCKS_PER_SEC);
@@ -1010,6 +1117,30 @@ int main(int argc, char *argv[])
 			printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
 
 			printf("Total blocks modified: %u %3.2f%%\n", total_modified, total_modified * 100.0f / total_blocks);
+			
+			memset(bc7_mode_hist, 0, sizeof(bc7_mode_hist));
+
+			for (int by = 0; by < (int)blocks_y; by++)
+			{
+				for (uint32_t bx = 0; bx < blocks_x; bx++)
+				{
+					block16* pBlock = &packed_image16[bx + by * blocks_x];
+
+					uint32_t mode = ((uint8_t*)pBlock)[0];
+					for (uint32_t m = 0; m <= 7; m++)
+					{
+						if (mode & (1 << m))
+						{
+							bc7_mode_hist[m]++;
+							break;
+						}
+					}
+				}
+			}
+
+			printf("BC7 mode histogram:\n");
+			for (uint32_t i = 0; i < 8; i++)
+				printf("%u: %u\n", i, bc7_mode_hist[i]);
 		}
 		else if (dxgi_format == DXGI_FORMAT_BC5_UNORM)
 		{
@@ -1312,7 +1443,7 @@ int main(int argc, char *argv[])
 
 	clock_t overall_end_t = clock();
 
-	printf("Processing time: %f secs\n", (double)(overall_end_t - start_t) / CLOCKS_PER_SEC);
+	printf("Total processing time: %f secs\n", (double)(overall_end_t - start_t) / CLOCKS_PER_SEC);
 	
 	size_t comp_size = 0;
 	void* pComp_data = tdefl_compress_mem_to_heap(pOutput_data, output_data_size, &comp_size, TDEFL_MAX_PROBES_MASK);// TDEFL_DEFAULT_MAX_PROBES);
