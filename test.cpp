@@ -53,7 +53,7 @@ static int print_usage()
 	fprintf(stderr, "-X# BC4/5: Set first color channel (defaults to 0 or red)\n");
 	fprintf(stderr, "-Y# BC4/5: Set second color channel (defaults to 1 or green)\n");
 	fprintf(stderr, "\n");
-	fprintf(stderr, "-s BC7: Use perceptual colorspace metrics instead of linear(the default for all formats is to use linear RGB/RGBA metrics). BC7 RDO mode is always linear.\n");
+	fprintf(stderr, "-s BC7: Use perceptual colorspace metrics instead of linear. The default for all formats is to use linear RGB/RGBA metrics. BC7 RDO mode is always linear.\n");
 	fprintf(stderr, "-uX BC7: Higher BC7 quality levels, X ranges from [0,4] for BC7. Default is 4.\n");
 	fprintf(stderr, "-pX BC7: Scan X partitions in mode 1, X ranges from [0,64], use 0 to disable mode 1 entirely (faster)\n");
 	fprintf(stderr, "-LX BC1: Set encoding level, where 0=fastest and 18=slowest but highest quality. Default is 18.\n");

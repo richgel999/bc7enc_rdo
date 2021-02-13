@@ -277,7 +277,7 @@ bool unpack_bc7_mode1_3_7(uint32_t mode, const uint64_t* data_chunks, color_rgba
 bool unpack_bc7_mode4_5(uint32_t mode, const uint64_t* data_chunks, color_rgba* pPixels)
 {
 	const uint32_t ENDPOINTS = 2;
-	const uint32_t COMPS = 4;
+	//const uint32_t COMPS = 4;
 	const uint32_t WEIGHT_BITS = 2;
 	const uint32_t WEIGHT_MASK = (1 << WEIGHT_BITS) - 1;
 	const uint32_t A_WEIGHT_BITS = (mode == 4) ? 3 : 2;
