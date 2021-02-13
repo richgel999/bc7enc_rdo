@@ -6,20 +6,22 @@ Currently, the entropy reduction transform is tuned for Deflate, LZHAM, or LZMA.
 
 You can see examples of the RDO BC7 encoder's current output [here](https://richg42.blogspot.com/2021/02/more-rdo-bc7-encoding.html). Some examples on how to use the command line tool for various BC7 modes are on my blog, [here](https://richg42.blogspot.com/2021/02/how-to-use-bc7encrdo.html).
 
-This repo contains both [bc7e.ispc](https://github.com/BinomialLLC/bc7e) and its distantly related but weaker 4 mode only non-ispc variant, bc7enc.cpp. bc7e supports all BC7 modes and features, but doesn't yet support reduced entropy BC7 encoding. bc7enc.cpp supports optional reduced entropy encoding (using -e with the command line tool). RDO BC7 is supported when using either encoder, however. 
+This repo contains both [bc7e.ispc](https://github.com/BinomialLLC/bc7e) and its distantly related but weaker 4 mode only non-ispc variant, bc7enc.cpp. The -U command line option enables bc7e.ispc, otherwise you get bc7enc.cpp. bc7e supports all BC7 modes and features, but doesn't yet support reduced entropy BC7 encoding. bc7enc.cpp supports optional reduced entropy encoding (using -e with the command line tool). RDO BC7 is supported when using either encoder, however. 
 
-The next major focus will be improving the default smooth block handling, and adding in bc7e to get all the BC7 modes.
+The next major focus will be improving the default smooth block handling and improving rate distorton performance.
 
 ### Compiling
 
-To compile with BC7E.ispc (requires [Intel's ISPC compiler](https://ispc.github.io/downloads.html) to be in your path - recommended):
+The cmake file has been tested with MSVC 2019 x64 and clang 6.0.0 under Ubuntu v18.04.
+
+To compile with bc7e.ispc (requires [Intel's ISPC compiler](https://ispc.github.io/downloads.html) to be in your path - recommended):
 
 ```
 cmake -D SUPPORT_BC7E=TRUE .
 make
 ```
 
-To compile without BC7E (tested with MSVC 2019 x64 and clang 6.0.0 under Ubuntu v18.04):
+To compile without BC7E:
 
 ```
 cmake .
