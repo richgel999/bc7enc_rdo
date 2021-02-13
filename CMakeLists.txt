@@ -70,6 +70,8 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${GCC_COMPILE_FLAGS} -D_DEBU
 set (BC7ENC_SRC_LIST ${COMMON_SRC_LIST}
 	bc7enc.cpp
 	bc7decomp.cpp
+
+	bc7decomp.h
 	lodepng.cpp	
 	test.cpp
 	rgbcx.cpp

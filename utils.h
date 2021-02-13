@@ -14,6 +14,7 @@
 #include <time.h>
 #include <vector>
 #include <string>
+#include <random>
 #include "dds_defs.h"
 
 #ifndef M_PI
@@ -288,6 +289,7 @@ public:
 			}
 
 			int l;
+
 			if (x >= x1)
 				goto skip;
 			
@@ -863,6 +865,31 @@ private:
 };
 
 float compute_block_max_std_dev(const color_quad_u8* pPixels, uint32_t block_width, uint32_t block_height, uint32_t num_comps);
+
+class rand
+{
+	std::mt19937 m_mt;
+
+public:
+	rand() {	}
+
+	rand(uint32_t s) { seed(s); }
+	void seed(uint32_t s) { m_mt.seed(s); }
+
+	// between [l,h]
+	int irand(int l, int h) { std::uniform_int_distribution<int> d(l, h); return d(m_mt); }
+
+	uint32_t urand32() { return static_cast<uint32_t>(irand(INT32_MIN, INT32_MAX)); }
+
+	bool bit() { return irand(0, 1) == 1; }
+
+	uint8_t byte() { return static_cast<uint8_t>(urand32()); }
+
+	// between [l,h)
+	float frand(float l, float h) { std::uniform_real_distribution<float> d(l, h); return d(m_mt); }
+
+	float gaussian(float mean, float stddev) { std::normal_distribution<float> d(mean, stddev); return d(m_mt); }
+};
 
 } // namespace utils
 

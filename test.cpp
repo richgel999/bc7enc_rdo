@@ -3,7 +3,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 
-#define BC7ENC_VERSION "1.06"
+#define BC7ENC_VERSION "1.07"
 
 #define LZHAM_STATS (0)
 #define DECODE_BC4_TO_GRAYSCALE (0)
@@ -53,7 +53,7 @@ static int print_usage()
 	fprintf(stderr, "-X# BC4/5: Set first color channel (defaults to 0 or red)\n");
 	fprintf(stderr, "-Y# BC4/5: Set second color channel (defaults to 1 or green)\n");
 	fprintf(stderr, "\n");
-	fprintf(stderr, "-l BC7: Use linear colorspace metrics instead of perceptual (the default is perceptual or sRGB!). BC7 RDO mode is always linear.\n");
+	fprintf(stderr, "-s BC7: Use perceptual colorspace metrics instead of linear(the default for all formats is to use linear RGB/RGBA metrics). BC7 RDO mode is always linear.\n");
 	fprintf(stderr, "-uX BC7: Higher BC7 quality levels, X ranges from [0,4] for BC7. Default is 4.\n");
 	fprintf(stderr, "-pX BC7: Scan X partitions in mode 1, X ranges from [0,64], use 0 to disable mode 1 entirely (faster)\n");
 	fprintf(stderr, "-LX BC1: Set encoding level, where 0=fastest and 18=slowest but highest quality. Default is 18.\n");
@@ -258,7 +258,7 @@ int main(int argc, char *argv[])
 
 	int bc7_uber_level = BC7ENC_MAX_UBER_LEVEL;
 	int max_partitions_to_scan = BC7ENC_MAX_PARTITIONS;
-	bool perceptual = true;
+	bool perceptual = false;
 	bool y_flip = false;
 	uint32_t bc45_channel0 = 0;
 	uint32_t bc45_channel1 = 1;
@@ -430,9 +430,9 @@ int main(int argc, char *argv[])
 					no_output_png = true;
 					break;
 				}
-				case 'l':
+				case 's':
 				{
-					perceptual = false;
+					perceptual = true;
 					break;
 				}
 				case 'p':
@@ -1114,7 +1114,7 @@ int main(int argc, char *argv[])
 			
 			clock_t rdo_end_t = clock();
 
-			printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
+			printf("Total RDO time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
 
 			printf("Total blocks modified: %u %3.2f%%\n", total_modified, total_modified * 100.0f / total_blocks);
 			
@@ -1218,7 +1218,7 @@ int main(int argc, char *argv[])
 
 			clock_t rdo_end_t = clock();
 
-			printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
+			printf("Total RDO time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
 
 			printf("Total blocks modified R: %u %3.2f%%\n", total_modified_r, total_modified_r * 100.0f / total_blocks);
 			printf("Total blocks modified G: %u %3.2f%%\n", total_modified_g, total_modified_g * 100.0f / total_blocks);
@@ -1273,7 +1273,7 @@ int main(int argc, char *argv[])
 
 			clock_t rdo_end_t = clock();
 
-			printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
+			printf("Total RDO time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
 
 			printf("Total blocks modified: %u %3.2f%%\n", total_modified, total_modified * 100.0f / total_blocks);
 		}
@@ -1336,7 +1336,7 @@ int main(int argc, char *argv[])
 
 			clock_t rdo_end_t = clock();
 
-			printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
+			printf("Total RDO time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
 
 			printf("Total blocks modified: %u %3.2f%%\n",
 				total_modified, total_modified * 100.0f / total_blocks);
@@ -1433,7 +1433,7 @@ int main(int argc, char *argv[])
 			
 			clock_t rdo_end_t = clock();
 
-			printf("Total time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
+			printf("Total RDO time: %f secs\n", (double)(rdo_end_t - rdo_start_t) / CLOCKS_PER_SEC);
 
 			printf("Total RGB blocks modified: %u %3.2f%%\n", total_modified_rgb, total_modified_rgb * 100.0f / total_blocks);
 			printf("Total Alpha blocks modified: %u %3.2f%%\n", total_modified_alpha, total_modified_alpha * 100.0f / total_blocks);
