@@ -38,7 +38,7 @@ To encode to non-RDO BC7 using BC7E, highest quality, perceptual metrics:
 ./bc7enc blah.png -U -u6
 ```
 
-To encode to RDO BC7 using BC7E, highest quality, lambda=.5, linear metrics (perceptual is always automatically disabled with -z is specified):
+To encode to RDO BC7 using BC7E, highest quality, lambda=.5, linear metrics (perceptual colorspace metrics are always automatically disabled when -z is specified):
 
 ```
 ./bc7enc blah.png -U -u6 -z.5
