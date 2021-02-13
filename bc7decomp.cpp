@@ -1,5 +1,6 @@
 // File: bc7decomp.c - Richard Geldreich, Jr. 3/31/2020 - MIT license or public domain (see end of file)
 #include "bc7decomp.h"
+#include <string.h>
 
 namespace bc7decomp 
 {
