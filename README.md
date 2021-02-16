@@ -46,10 +46,10 @@ To encode to non-RDO BC7 using BC7E, highest quality, linear RGB(A) metrics:
 ./bc7enc blah.png -U -u6
 ```
 
-To encode to RDO BC7 using BC7E, highest quality, lambda=.5, linear metrics (perceptual colorspace metrics are always automatically disabled when -z is specified):
+To encode to RDO BC7 using BC7E, highest quality, lambda=.5, allow 2 matches instead of 1 per block for higher effectiveness, linear metrics (perceptual colorspace metrics are always automatically disabled when -z is specified):
 
 ```
-./bc7enc blah.png -U -u6 -z.5
+./bc7enc blah.png -U -u6 -z.5 -zn
 ```
 
 To encode to RDO BC7 using BC7E, high quality, lambda=.5, linear metrics, with significantly faster encoding time (sacrificing compression effectiveness due to -zc16): 
@@ -68,6 +68,12 @@ To encode to RDO BC7 using the entropy reduction transform combined with reduced
 
 ```
 ./bc7enc -zc256 blah.png -e -z1.0
+```
+
+Same as before, but higher compression (allow 2 matches per block instead of 1):
+
+```
+./bc7enc -zc256 blah.png -e -z1.0 -zn
 ```
 
 Same, except disable ultra-smooth block handling:
