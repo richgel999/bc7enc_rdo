@@ -31,6 +31,7 @@ namespace ert
 
 		uint32_t m_color_weights[4];
 				
+		bool m_try_two_matches;
 		bool m_allow_relative_movement;
 		bool m_skip_zero_mse_blocks;
 		bool m_debug_output;
@@ -48,6 +49,7 @@ namespace ert
 			m_color_weights[1] = 1;
 			m_color_weights[2] = 1;
 			m_color_weights[3] = 1;
+			m_try_two_matches = false;
 			m_allow_relative_movement = false;
 			m_skip_zero_mse_blocks = false;
 			m_debug_output = false;
@@ -61,6 +63,7 @@ namespace ert
 			printf("Max smooth block std dev: %f\n", m_max_smooth_block_std_dev);
 			printf("Smooth block max MSE scale: %f\n", m_smooth_block_max_mse_scale);
 			printf("Color weights: %u %u %u %u\n", m_color_weights[0], m_color_weights[1], m_color_weights[2], m_color_weights[3]);
+			printf("Try two matches: %u\n", m_try_two_matches);
 			printf("Allow relative movement: %u\n", m_allow_relative_movement);
 			printf("Skip zero MSE blocks: %u\n", m_skip_zero_mse_blocks);
 		}

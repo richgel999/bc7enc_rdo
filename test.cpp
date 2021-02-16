@@ -67,6 +67,7 @@ static int print_usage()
 	fprintf(stderr, "-z# BC1-7: Set RDO lambda factor (quality), lower=higher quality/larger LZ compressed files, try .1-4, combine with -e for BC7 for more gains\n");
 	fprintf(stderr, "-zb# BC1-7: Manually set smooth block scale factor, higher values = less distortion on smooth blocks, try 5-70\n");
 	fprintf(stderr, "-zc# BC1: Set RDO lookback window size in bytes (higher=more effective but slower, default=128, try 64-16384)\n");
+	fprintf(stderr, "-zn BC1-7: Inject up to 2 matches into each block vs. 1 (a little slower, but noticeably higher compression)\n");
 	fprintf(stderr, "-zm BC1-7: Allow byte sequences to be moved inside blocks (much slower)\n");
 	fprintf(stderr, "-zu BC1/3/7: Disable RGB ultrasmooth block detection/handling\n");
 	fprintf(stderr, "RDO debugging/development:\n");
@@ -123,7 +124,7 @@ static std::vector<float> compute_block_mse_scales(const image_u8& source_image,
 			yl = clamp(yl, 0.0f, 1.0f);
 			yl *= yl;
 
-			float y_avg = y_stats.get_average();
+			float y_avg = y_stats.get_mean();
 
 			if ((y_avg < DARK_THRESHOLD) || (y_avg >= BRIGHT_THRESHOLD))
 				yl = 1.0f;
@@ -238,17 +239,18 @@ static std::vector<float> compute_block_mse_scales(const image_u8& source_image,
 	return block_mse_scales;
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
+	int max_threads = 1;
+#if _OPENMP
+	max_threads = std::min(std::max(1, omp_get_max_threads()), 128);
+#endif
+
 	printf("bc7enc v%s - RDO BC1-7 Texture Compressor\n", BC7ENC_VERSION);
 
 	if (argc < 2)
 		return print_usage();
-
-	int max_threads = 1;
-#if _OPENMP
-	max_threads = std::max(1, omp_get_max_threads());
-#endif
+		
 	printf("Max threads: %u\n", max_threads);
 
 	std::string src_filename, src_alpha_filename, dds_output_filename, png_output_filename, png_alpha_output_filename;
@@ -287,6 +289,7 @@ int main(int argc, char *argv[])
 	bool rdo_bc7_pbit1_weighting = true;
 	float rdo_max_smooth_block_std_dev = 18.0f;
 	bool rdo_allow_relative_movement = false;
+	bool rdo_try_2_matches = false;
 	bool rdo_ultrasmooth_block_handling = true;
 	
 	bool use_hq_bc345 = true;
@@ -489,6 +492,10 @@ int main(int argc, char *argv[])
 					else if (strncmp(pArg, "-zm", 3) == 0)
 					{
 						rdo_allow_relative_movement = true;
+					}
+					else if (strncmp(pArg, "-zn", 3) == 0)
+					{
+						rdo_try_2_matches = true;
 					}
 					else if (strncmp(pArg, "-zu", 3) == 0)
 					{
@@ -990,6 +997,7 @@ int main(int argc, char *argv[])
 		ert_p.m_smooth_block_max_mse_scale = rdo_smooth_block_error_scale;
 		ert_p.m_max_smooth_block_std_dev = rdo_max_smooth_block_std_dev;
 		ert_p.m_debug_output = rdo_debug_output;
+		ert_p.m_try_two_matches = rdo_try_2_matches;
 		ert_p.m_allow_relative_movement = rdo_allow_relative_movement;
 		ert_p.m_skip_zero_mse_blocks = false;
 

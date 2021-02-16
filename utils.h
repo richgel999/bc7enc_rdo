@@ -27,6 +27,7 @@ inline int iabs(int i) { if (i < 0) i = -i; return i; }
 inline uint8_t clamp255(int32_t i) { return (uint8_t)((i & 0xFFFFFF00U) ? (~(i >> 31)) : i); }
 template <typename S> inline S clamp(S value, S low, S high) { return (value < low) ? low : ((value > high) ? high : value); }
 template<typename F> inline F lerp(F a, F b, F s) { return a + (b - a) * s; }
+template<typename F> inline F square(F a) { return a * a; }
 
 struct color_quad_u8
 {
@@ -207,6 +208,13 @@ public:
 			memcpy(pPixels + y * width, &(*this)(bx * width, by * height + y), width * sizeof(color_quad_u8));
 	}
 
+	inline void get_block_clamped(uint32_t bx, uint32_t by, uint32_t width, uint32_t height, color_quad_u8* pPixels) const
+	{
+		for (uint32_t y = 0; y < height; y++)
+			for (uint32_t x = 0; x < width; x++)
+				pPixels[x + y * width] = get_clamped(bx * width + x, by * height + y);
+	}
+		
 	inline void set_block(uint32_t bx, uint32_t by, uint32_t width, uint32_t height, const color_quad_u8* pPixels)
 	{
 		assert((bx * width + width) <= m_width);
@@ -839,6 +847,8 @@ void strip_path(std::string& s);
 
 uint32_t hash_hsieh(const uint8_t* pBuf, size_t len);
 
+// https://www.johndcook.com/blog/standard_deviation/
+// This class is for small numbers of integers, so precision shouldn't be an issue.
 class tracked_stat
 {
 public:
@@ -850,19 +860,67 @@ public:
 
 	tracked_stat& operator += (uint32_t val) { update(val); return *this; }
 
-	uint32_t get_number_of_values() { return m_num; }
+	uint32_t get_number_of_values() const { return m_num; }
 	uint64_t get_total() const { return m_total; }
 	uint64_t get_total2() const { return m_total2; }
 
-	float get_average() const { return m_num ? (float)m_total / m_num : 0.0f; };
+	float get_mean() const { return m_num ? (float)m_total / m_num : 0.0f; };
+		
+	float get_variance() const { return m_num ? ((float)(m_num * m_total2 - m_total * m_total)) / (m_num * m_num) : 0.0f; }
 	float get_std_dev() const { return m_num ? sqrtf((float)(m_num * m_total2 - m_total * m_total)) / m_num : 0.0f; }
-	float get_variance() const { float s = get_std_dev(); return s * s; }
+
+	float get_sample_variance() const { return (m_num > 1) ? ((float)(m_num * m_total2 - m_total * m_total)) / (m_num * (m_num - 1)) : 0.0f; }
+	float get_sample_std_dev() const { return (m_num > 1) ? sqrtf(get_sample_variance()) : 0.0f; }
 
 private:
 	uint32_t m_num;
 	uint64_t m_total;
 	uint64_t m_total2;
 };
+
+inline float compute_covariance(const float* pA, const float* pB, const tracked_stat& a, const tracked_stat& b, bool sample)
+{
+	const uint32_t n = a.get_number_of_values();
+	assert(n == b.get_number_of_values());
+
+	if (!n)
+	{
+		assert(0);
+		return 0.0f;
+	}
+	if ((sample) && (n == 1))
+	{
+		assert(0);
+		return 0;
+	}
+
+	const float mean_a = a.get_mean();
+	const float mean_b = b.get_mean();
+	
+	float total = 0.0f;
+	for (uint32_t i = 0; i < n; i++)
+		total += (pA[i] - mean_a) * (pB[i] - mean_b);
+
+	return total / (sample ? (n - 1) : n);
+}
+
+inline float compute_correlation_coefficient(const float* pA, const float* pB, const tracked_stat& a, const tracked_stat& b, float c, bool sample)
+{
+	if (!a.get_number_of_values())
+		return 1.0f;
+
+	float covar = compute_covariance(pA, pB, a, b, sample);
+	float std_dev_a = sample ? a.get_sample_std_dev() : a.get_std_dev();
+	float std_dev_b = sample ? b.get_sample_std_dev() : b.get_std_dev();
+	float denom = std_dev_a * std_dev_b + c;
+
+	if (denom < .0000125f)
+		return 1.0f;
+
+	float result = (covar + c) / denom;
+	
+	return clamp(result, -1.0f, 1.0f);
+}
 
 float compute_block_max_std_dev(const color_quad_u8* pPixels, uint32_t block_width, uint32_t block_height, uint32_t num_comps);
 
@@ -890,6 +948,9 @@ public:
 
 	float gaussian(float mean, float stddev) { std::normal_distribution<float> d(mean, stddev); return d(m_mt); }
 };
+
+bool save_astc_file(const char* pFilename, block16_vec& blocks, uint32_t width, uint32_t height, uint32_t block_width, uint32_t block_height);
+bool load_astc_file(const char* pFilename, block16_vec& blocks, uint32_t& width, uint32_t& height, uint32_t& block_width, uint32_t& block_height);
 
 } // namespace utils
 

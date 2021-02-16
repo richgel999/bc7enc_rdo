@@ -619,4 +619,112 @@ float compute_block_max_std_dev(const color_quad_u8* pPixels, uint32_t block_wid
 	return max_std_dev;
 }
 
+const uint32_t ASTC_SIG = 0x5CA1AB13;
+
+#pragma pack(push, 1)
+struct astc_header
+{
+	uint32_t m_sig;
+	uint8_t m_block_x;
+	uint8_t m_block_y;
+	uint8_t m_block_z;
+	uint8_t m_width[3];
+	uint8_t m_height[3];
+	uint8_t m_depth[3];
+};
+#pragma pack(pop)
+
+bool save_astc_file(const char* pFilename, block16_vec& blocks, uint32_t width, uint32_t height, uint32_t block_width, uint32_t block_height)
+{
+	FILE* pFile = nullptr;
+
+#ifdef _MSC_VER	
+	fopen_s(&pFile, pFilename, "wb");
+#else
+	pFile = fopen(pFilename, "wb");
+#endif
+
+	if (!pFile)
+		return false;
+
+	astc_header hdr;
+	memset(&hdr, 0, sizeof(hdr));
+
+	hdr.m_sig = ASTC_SIG;
+	hdr.m_block_x = (uint8_t)block_width;
+	hdr.m_block_y = (uint8_t)block_height;
+	hdr.m_block_z = 1;
+	hdr.m_width[0] = (uint8_t)(width);
+	hdr.m_width[1] = (uint8_t)(width >> 8);
+	hdr.m_width[2] = (uint8_t)(width >> 16);
+	hdr.m_height[0] = (uint8_t)(height);
+	hdr.m_height[1] = (uint8_t)(height >> 8);
+	hdr.m_height[2] = (uint8_t)(height >> 16);
+	hdr.m_depth[0] = 1;
+	fwrite(&hdr, sizeof(hdr), 1, pFile);
+
+	fwrite(blocks.data(), 16, blocks.size(), pFile);
+	if (fclose(pFile) == EOF)
+		return false;
+
+	return true;
+}
+
+bool load_astc_file(const char* pFilename, block16_vec& blocks, uint32_t& width, uint32_t& height, uint32_t& block_width, uint32_t& block_height)
+{
+	FILE* pFile = nullptr;
+
+#ifdef _MSC_VER
+	fopen_s(&pFile, pFilename, "rb");
+#else
+	pFile = fopen(pFilename, "rb");
+#endif
+
+	if (!pFile)
+		return false;
+
+	astc_header hdr;
+	if (fread(&hdr, sizeof(hdr), 1, pFile) != 1)
+	{
+		fclose(pFile);
+		return false;
+	}
+
+	if (hdr.m_sig != ASTC_SIG)
+	{
+		fclose(pFile);
+		return false;
+	}
+
+	width = hdr.m_width[0] + (hdr.m_width[1] << 8) + (hdr.m_width[2] << 16);
+	height = hdr.m_height[0] + (hdr.m_height[1] << 8) + (hdr.m_height[2] << 16);
+	uint32_t depth = hdr.m_depth[0] + (hdr.m_depth[1] << 8) + (hdr.m_depth[2] << 16);
+
+	if ((width < 1) || (width > 32768) || (height < 1) || (height > 32768))
+		return false;
+	if ((hdr.m_block_z != 1) || (depth != 1))
+		return false;
+
+	block_width = hdr.m_block_x;
+	block_height = hdr.m_block_y;
+
+	if ((block_width < 4) || (block_width > 12) || (block_height < 4) || (block_height > 12))
+		return false;
+
+	uint32_t blocks_x = (width + block_width - 1) / block_width;
+	uint32_t blocks_y = (height + block_height - 1) / block_height;
+	uint32_t total_blocks = blocks_x * blocks_y;
+
+	blocks.resize(total_blocks);
+
+	if (fread(blocks.data(), 16, total_blocks, pFile) != total_blocks)
+	{
+		fclose(pFile);
+		return false;
+	}
+
+	fclose(pFile);
+	return true;
+}
+
 } // namespace utils
