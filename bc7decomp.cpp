@@ -538,8 +538,8 @@ bool unpack_bc7_mode6(const void *pBlock_bits, color_rgba *pPixels)
 
 	color_rgba vals[16];
 #ifdef BC7DECOMP_USE_SSE2
-	__m128i vep0 = _mm_set_epi16(a0, b0, g0, r0, a0, b0, g0, r0);
-	__m128i vep1 = _mm_set_epi16(a1, b1, g1, r1, a1, b1, g1, r1);
+	__m128i vep0 = _mm_set_epi16((short)a0, (short)b0, (short)g0, (short)r0, (short)a0, (short)b0, (short)g0, (short)r0);
+	__m128i vep1 = _mm_set_epi16((short)a1, (short)b1, (short)g1, (short)r1, (short)a1, (short)b1, (short)g1, (short)r1);
 
 	for (uint32_t i = 0; i < 16; i += 4)
 	{
