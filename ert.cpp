@@ -600,7 +600,7 @@ namespace ert
 								memcpy(trial_block + ofs, pPrev_blk + ofs, len);
 
 								color_rgba decoded_trial_block[MAX_BLOCK_PIXELS];
-								if (!(*pUnpack_block_func)(trial_block, decoded_trial_block, pUnpack_block_func_user_data))
+								if (!(*pUnpack_block_func)(trial_block, decoded_trial_block, block_index, pUnpack_block_func_user_data))
 									continue;
 
 								float trial_mse = compute_block_mse(pPixels, decoded_trial_block, block_width, block_height, total_block_pixels, num_comps, params.m_color_weights, one_over_total_color_weight);
