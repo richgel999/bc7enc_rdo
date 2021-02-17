@@ -1015,8 +1015,10 @@ int main(int argc, char* argv[])
 			bool m_allow_3color_mode;
 			bool m_use_bc1_3color_mode_for_black;
 
-			static bool unpack_bc1_block(const void* pBlock, ert::color_rgba* pPixels, void* pUser_data)
+			static bool unpack_bc1_block(const void* pBlock, ert::color_rgba* pPixels, uint32_t block_index, void* pUser_data)
 			{
+				(void)block_index;
+
 				const unpacker_funcs* pState = (const unpacker_funcs*)pUser_data;
 								
 				bool used_3color_mode = rgbcx::unpack_bc1(pBlock, pPixels, true, pState->m_mode);
@@ -1044,16 +1046,18 @@ int main(int argc, char* argv[])
 				return true;
 			}
 
-			static bool unpack_bc4_block(const void* pBlock, ert::color_rgba* pPixels, void* pUser_data)
+			static bool unpack_bc4_block(const void* pBlock, ert::color_rgba* pPixels, uint32_t block_index, void* pUser_data)
 			{
+				(void)block_index;
 				(void)pUser_data;
 				memset(pPixels, 0, sizeof(ert::color_rgba) * 16);
 				rgbcx::unpack_bc4(pBlock, (uint8_t*)pPixels, 4);
 				return true;
 			}
 
-			static bool unpack_bc7_block(const void* pBlock, ert::color_rgba* pPixels, void* pUser_data)
+			static bool unpack_bc7_block(const void* pBlock, ert::color_rgba* pPixels, uint32_t block_index, void* pUser_data)
 			{
+				(void)block_index;
 				(void)pUser_data;
 				return bc7decomp::unpack_bc7(pBlock, (bc7decomp::color_rgba*)pPixels);
 			}

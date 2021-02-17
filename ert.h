@@ -69,7 +69,7 @@ namespace ert
 		}
 	};
 
-	typedef bool (*pUnpack_block_func)(const void* pBlock, color_rgba* pPixels, void* pUser_data);
+	typedef bool (*pUnpack_block_func)(const void* pBlock, color_rgba* pPixels, uint32_t block_index, void* pUser_data);
 
 	// BC7 entropy reduction transform with Deflate/LZMA/LZHAM optimizations
 	bool reduce_entropy(void* pBlocks, uint32_t num_blocks,
