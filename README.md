@@ -6,11 +6,11 @@ Currently, the entropy reduction transform is tuned for Deflate, LZHAM, or LZMA.
 
 You can see examples of the RDO BC7 encoder's current output [here](https://richg42.blogspot.com/2021/02/more-rdo-bc7-encoding.html). Some examples on how to use the command line tool are on my blog, [here](https://richg42.blogspot.com/2021/02/how-to-use-bc7encrdo.html).
 
-This repo contains both [bc7e.ispc](https://github.com/BinomialLLC/bc7e) and its distantly related but weaker 4 mode only non-ispc variant, bc7enc.cpp. The -U command line option enables bc7e.ispc, otherwise you get bc7enc.cpp. bc7e supports all BC7 modes and features, but doesn't yet support reduced entropy BC7 encoding. bc7enc.cpp supports optional reduced entropy encoding (using -e with the command line tool). RDO BC7 is supported when using either encoder, however. 
+This repo contains both [bc7e.ispc](https://github.com/BinomialLLC/bc7e) and its distantly related but weaker 4 mode only non-ispc variant, bc7enc.cpp. By default, if you set SUPPORT_BC7E=TRUE when running cmake, you get bc7e.ispc, otherwise you get bc7enc.cpp. (The -C option forces bc7enc.cpp.) bc7e supports all BC7 modes and features, but doesn't yet support reduced entropy BC7 encoding. bc7enc.cpp supports optional reduced entropy encoding (using -e with the command line tool). RDO BC7 is supported when using either encoder, however.
 
 The next major focus will be improving the default smooth block handling and improving rate distorton performance.
 
-This repo was originally derived from [bc7enc](https://github.com/richgel999/bc7enc).
+This repo was originally derived from [bc7enc](https://github.com/richgel999/bc7enc) and [bc7e](https://github.com/BinomialLLC/bc7e). Note this repo contains the latest version of bc7e.ispc, which has a determinism bug fix.
 
 ### Compiling
 
@@ -34,58 +34,58 @@ Note the MSVC build and Linux builds enable OpenMP for faster compression.
 
 ### Examples
 
-To encode to non-RDO BC7 using BC7E, highest quality, using perceptual (scaled YCbCr) colorspace error metrics:
-
-```
-./bc7enc blah.png -U -u6 -s
-```
-
 To encode to non-RDO BC7 using BC7E, highest quality, linear RGB(A) metrics:
 
 ```
-./bc7enc blah.png -U -u6
+./bc7enc blah.png
+```
+
+To encode to non-RDO BC7 using BC7E, highest quality, using perceptual (scaled YCbCr) colorspace error metrics:
+
+```
+./bc7enc blah.png -s
 ```
 
 To encode to RDO BC7 using BC7E, highest quality, lambda=.5, allow 2 matches instead of 1 per block for higher effectiveness, linear metrics (perceptual colorspace metrics are always automatically disabled when -z is specified):
 
 ```
-./bc7enc blah.png -U -u6 -z.5 -zn
+./bc7enc blah.png -z.5 -zn
 ```
 
 To encode to RDO BC7 using BC7E, high quality, lambda=.5, linear metrics, with significantly faster encoding time (sacrificing compression effectiveness due to -zc16): 
 
 ```
-./bc7enc blah.png -U -u4 -z.5 -zc16
+./bc7enc blah.png -u4 -z.5 -zc16
 ```
 
 To encode to non-RDO BC7 using entropy reduced or quantized/weighted BC7 (no slowdown vs. non-RDO bc7enc.cpp for BC7, slightly reduced quality, but 5-10% better LZ compression, only uses 2 or 4 BC7 modes):
 
 ```
-./bc7enc blah.png -e
+./bc7enc blah.png -C -e
 ```
 
 To encode to RDO BC7 using the entropy reduction transform combined with reduced entropy BC7 encoding, with a slightly larger window size than the default which is 128 bytes:
 
 ```
-./bc7enc -zc256 blah.png -e -z1.0
+./bc7enc -zc256 blah.png -C -e -z1.0
 ```
 
 Same as before, but higher compression (allow 2 matches per block instead of 1):
 
 ```
-./bc7enc -zc256 blah.png -e -z1.0 -zn
+./bc7enc -zc256 blah.png -C -e -z1.0 -zn
 ```
 
 Same, except disable ultra-smooth block handling:
 
 ```
-./bc7enc -zc256 blah.png -e -z1.0 -zu
+./bc7enc -zc256 blah.png -C -e -z1.0 -zu
 ```
 
 To encode to RDO BC7 using the entropy reduction transform at lower quality, combined with reduced entropy BC7 encoding, with a slightly larger window size than the default which is 128 bytes:
 
 ```
-./bc7enc -zc256 blah.png -e -z2.0
+./bc7enc -zc256 blah.png -C -e -z2.0
 ```
 
 To encode to RDO BC7 using the entropy reduction transform at higher effectivenes using a larger window size, without using reduced entropy BC7 encoding:
