@@ -46,16 +46,16 @@ To encode to non-RDO BC7 using BC7E, highest quality, using perceptual (scaled Y
 ./bc7enc blah.png -s
 ```
 
-To encode to RDO BC7 using BC7E, highest quality, lambda=.5, allow 2 matches instead of 1 per block for higher effectiveness, linear metrics (perceptual colorspace metrics are always automatically disabled when -z is specified):
+To encode to RDO BC7 using BC7E, highest quality, lambda=.5, linear metrics (perceptual colorspace metrics are always automatically disabled when -z is specified), with a balance of encoding performance vs. RDO efficiency:
 
 ```
-./bc7enc blah.png -z.5 -zn
+./bc7enc blah.png -z.5
 ```
 
-To encode to RDO BC7 using BC7E, high quality, lambda=.5, linear metrics, with significantly faster encoding time (sacrificing compression effectiveness due to -zc16): 
+To encode to RDO BC7 using BC7E, lower baseline quality (-u4) for faster encoding, lambda=.5, and with faster encoding (only inject one match vs two, with a tiny RDO lookback window size of 16 bytes):
 
 ```
-./bc7enc blah.png -u4 -z.5 -zc16
+./bc7enc blah.png -u4 -z.5 -ze -zc16
 ```
 
 To encode to non-RDO BC7 using entropy reduced or quantized/weighted BC7 (no slowdown vs. non-RDO bc7enc.cpp for BC7, slightly reduced quality, but 5-10% better LZ compression, only uses 2 or 4 BC7 modes):
