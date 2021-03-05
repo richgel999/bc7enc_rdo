@@ -22,6 +22,7 @@ static int print_usage()
 	fprintf(stderr, "By default, this tool compresses to BC7. A DX10 DDS file and a unpacked PNG file will be written\nto the current directory with the .dds/_unpacked.png/_unpacked_alpha.png suffixes.\n");
 	fprintf(stderr, "This tool does not yet support generating mipmaps (yet).\n");
 	fprintf(stderr, "\nUsage: bc7enc [-apng_filename] [options] input_filename.png [compressed_output.dds] [unpacked_output.png]\n\n");
+	fprintf(stderr, "-q Quiet mode (less debug/status output)\n");
 	fprintf(stderr, "-apng_filename Load G channel of PNG file into alpha channel of source image\n");
 	fprintf(stderr, "-g Don't write unpacked output PNG files (this disables PSNR metrics too).\n");
 	fprintf(stderr, "-y Flip source image along Y axis before packing.\n");
@@ -298,7 +299,14 @@ static int graph_mode(const std::string& graph_listing_file, rdo_bc::rdo_bc_para
 
 int main(int argc, char* argv[])
 {
-	printf("bc7enc v%s - RDO BC1-7 Texture Compressor\n", BC7ENC_VERSION);
+	bool quiet_mode = false;
+
+	for (int i = 0; i < argc; i++)
+		if (strcmp(argv[i], "-q") == 0)
+			quiet_mode = true;
+
+	if (!quiet_mode)
+		printf("bc7enc v%s - RDO BC1-7 Texture Compressor\n", BC7ENC_VERSION);
 
 	int max_threads = 1;
 #if _OPENMP
@@ -319,7 +327,7 @@ int main(int argc, char* argv[])
 
 	rdo_bc::rdo_bc_params rp;
 	rp.m_rdo_max_threads = max_threads;
-	rp.m_status_output = true;
+	rp.m_status_output = !quiet_mode;
 
 	std::string graph_listing_file;
 
@@ -337,7 +345,6 @@ int main(int argc, char* argv[])
 				}
 				case 'q':
 				{
-					rp.m_status_output = false;
 					break;
 				}
 				case 'U':
