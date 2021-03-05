@@ -36,7 +36,7 @@ static int print_usage()
 	fprintf(stderr, "-Y# BC4/5: Set second color channel (defaults to 1 or green)\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "-U BC7: Use bc7e.ispc (this is the default if it's been compiled in) instead of bc7enc.cpp. Higher quality using all BC7 modes, but doesn't support -e.\n");
-	fprintf(stderr, "-C BC7: Use bc7enc.cpp instead of bc7enc.cpp. Only supports modes 1/5/6/7. May be a slight win at certain lambdas combined with -e, but overall is weaker vs. bc7e.ispc.\n");
+	fprintf(stderr, "-C BC7: Use bc7enc.cpp instead of the default bc7e.ispc. Only supports modes 1/5/6/7. May be a slight win at certain lambdas combined with -e, but overall is weaker vs. bc7e.ispc.\n");
 	fprintf(stderr, "-s BC7: Use perceptual colorspace metrics instead of linear (bc7e.ispc only). The default for all formats is to use linear RGB/RGBA metrics. RDO mode is currently always linear.\n");
 	fprintf(stderr, "-uX BC7: Set the BC7 base encoder quality level. X ranges from [0,4] for bc7enc.cpp or [0,6] for bc7e.ispc. Default is 6 (highest quality).\n");
 	fprintf(stderr, "-pX BC7: (bc7enc.cpp only) Scan X partitions in mode 1, X ranges from [0,64], use 0 to disable mode 1 entirely (faster)\n");
