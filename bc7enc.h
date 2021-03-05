@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #define BC7ENC_BLOCK_SIZE (16)
 #define BC7ENC_MAX_PARTITIONS (64)
@@ -49,6 +50,11 @@ struct bc7enc_compress_block_params
 	float m_mode7_error_weight;
 
 	float m_low_frequency_partition_weight;
+
+	void clear()
+	{
+		memset(this, 0, sizeof(*this));
+	}
 
 	void print()
 	{

@@ -1,1 +1,1 @@
-cmake /D SUPPORT_BC7E=TRUE .
+cmake -D SUPPORT_BC7E=TRUE .

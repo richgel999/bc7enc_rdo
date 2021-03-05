@@ -32,7 +32,7 @@ namespace rdo_bc
 		void clear()
 		{
 			m_bc7_uber_level = 6; // BC7ENC_MAX_UBER_LEVEL;
-			m_max_partitions_to_scan = BC7ENC_MAX_PARTITIONS;
+			m_bc7enc_max_partitions_to_scan = BC7ENC_MAX_PARTITIONS;
 			m_perceptual = false;
 			m_y_flip = false;
 			m_bc45_channel0 = 0;
@@ -54,10 +54,10 @@ namespace rdo_bc
 			m_custom_rdo_smooth_block_error_scale = false;
 			m_lookback_window_size = 128;
 			m_custom_lookback_window_size = false;
-			m_rdo_bc7_quant_mode6_endpoints = true;
-			m_rdo_bc7_weight_modes = true;
-			m_rdo_bc7_weight_low_frequency_partitions = true;
-			m_rdo_bc7_pbit1_weighting = true;
+			m_bc7enc_rdo_bc7_quant_mode6_endpoints = true;
+			m_bc7enc_rdo_bc7_weight_modes = true;
+			m_bc7enc_rdo_bc7_weight_low_frequency_partitions = true;
+			m_bc7enc_rdo_bc7_pbit1_weighting = true;
 			m_rdo_max_smooth_block_std_dev = 18.0f;
 			m_rdo_allow_relative_movement = false;
 			m_rdo_try_2_matches = true;
@@ -67,10 +67,10 @@ namespace rdo_bc
 			m_bc345_search_rad = 5;
 			m_bc345_mode_mask = rgbcx::BC4_USE_ALL_MODES;
 
-			m_bc7_mode6_only = false;
+			m_bc7enc_mode6_only = false;
 			m_rdo_multithreading = true;
 
-			m_bc7_reduce_entropy = false;
+			m_bc7enc_reduce_entropy = false;
 
 			m_use_bc7e = false;
 
@@ -86,7 +86,7 @@ namespace rdo_bc
 		}
 
 		int m_bc7_uber_level;
-		int m_max_partitions_to_scan;
+		int m_bc7enc_max_partitions_to_scan;
 		bool m_perceptual;
 		bool m_y_flip;
 		uint32_t m_bc45_channel0;
@@ -107,10 +107,10 @@ namespace rdo_bc
 		bool m_custom_rdo_smooth_block_error_scale;
 		uint32_t m_lookback_window_size;
 		bool m_custom_lookback_window_size;
-		bool m_rdo_bc7_quant_mode6_endpoints;
-		bool m_rdo_bc7_weight_modes;
-		bool m_rdo_bc7_weight_low_frequency_partitions;
-		bool m_rdo_bc7_pbit1_weighting;
+		bool m_bc7enc_rdo_bc7_quant_mode6_endpoints;
+		bool m_bc7enc_rdo_bc7_weight_modes;
+		bool m_bc7enc_rdo_bc7_weight_low_frequency_partitions;
+		bool m_bc7enc_rdo_bc7_pbit1_weighting;
 		float m_rdo_max_smooth_block_std_dev;
 		bool m_rdo_allow_relative_movement;
 		bool m_rdo_try_2_matches;
@@ -120,10 +120,10 @@ namespace rdo_bc
 		int m_bc345_search_rad;
 		uint32_t m_bc345_mode_mask;
 
-		bool m_bc7_mode6_only;
+		bool m_bc7enc_mode6_only;
 		bool m_rdo_multithreading;
 
-		bool m_bc7_reduce_entropy;
+		bool m_bc7enc_reduce_entropy;
 
 		bool m_use_bc7e;
 		bool m_status_output;

@@ -118,9 +118,14 @@ static float g_mode7_rgba_midpoints[32][2];
 
 static uint8_t g_mode6_reduced_quant[2048][2];
 
+static bool g_initialized;
+
 // Initialize the lookup table used for optimal single color compression in mode 1/7. Must be called before encoding.
 void bc7enc_compress_block_init()
 {
+	if (g_initialized)
+		return;
+
 	// Mode 7 endpoint midpoints
 	for (uint32_t p = 0; p < 2; p++)
 	{
@@ -275,6 +280,8 @@ void bc7enc_compress_block_init()
 		} // lp
 
 	} // c
+
+	g_initialized = true;
 }
 
 static void compute_least_squares_endpoints_rgba(uint32_t N, const uint8_t *pSelectors, const vec4F *pSelector_weights, vec4F *pXl, vec4F *pXh, const color_rgba *pColors)

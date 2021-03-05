@@ -14,6 +14,20 @@ using namespace utils;
 
 namespace rdo_bc
 {
+	static const char* get_dxgi_format_string(DXGI_FORMAT fmt)
+	{
+		switch (fmt)
+		{
+		case DXGI_FORMAT_BC1_UNORM: return "BC1_UNORM";
+		case DXGI_FORMAT_BC4_UNORM: return "BC4_UNORM";
+		case DXGI_FORMAT_BC3_UNORM: return "BC3_UNORM";
+		case DXGI_FORMAT_BC5_UNORM: return "BC5_UNORM";
+		case DXGI_FORMAT_BC7_UNORM: return "BC7_UNORM";
+		default: break;
+		}
+		return "?";
+	}
+
 	static std::vector<float> compute_block_mse_scales(const image_u8& source_image, uint32_t blocks_x, uint32_t blocks_y, uint32_t total_blocks, bool rdo_debug_output)
 	{
 		const float ULTRASMOOTH_BLOCK_STD_DEV_THRESHOLD = 2.9f;
@@ -252,10 +266,10 @@ namespace rdo_bc
 		bc7enc_compress_block_params_init(&m_bc7enc_pack_params);
 		if (!m_params.m_perceptual)
 			bc7enc_compress_block_params_init_linear_weights(&m_bc7enc_pack_params);
-		m_bc7enc_pack_params.m_max_partitions = m_params.m_max_partitions_to_scan;
+		m_bc7enc_pack_params.m_max_partitions = m_params.m_bc7enc_max_partitions_to_scan;
 		m_bc7enc_pack_params.m_uber_level = std::min(BC7ENC_MAX_UBER_LEVEL, m_params.m_bc7_uber_level);
 
-		if (m_params.m_bc7_mode6_only)
+		if (m_params.m_bc7enc_mode6_only)
 			m_bc7enc_pack_params.m_mode_mask = 1 << 6;
 
 		if ((m_params.m_dxgi_format == DXGI_FORMAT_BC7_UNORM) && (m_params.m_rdo_lambda > 0.0f))
@@ -266,14 +280,14 @@ namespace rdo_bc
 			bc7enc_compress_block_params_init_linear_weights(&m_bc7enc_pack_params);
 		}
 
-		if ((m_params.m_dxgi_format == DXGI_FORMAT_BC7_UNORM) && (m_params.m_bc7_reduce_entropy))
+		if ((m_params.m_dxgi_format == DXGI_FORMAT_BC7_UNORM) && (m_params.m_bc7enc_reduce_entropy))
 		{
 			// Configure the BC7 encoder with some decent parameters for later RDO post-processing.
 			// Textures with alpha are harder for BC7 to handle, so we use more conservative defaults.
 
 			m_bc7enc_pack_params.m_mode17_partition_estimation_filterbank = false;
 
-			if (m_params.m_rdo_bc7_weight_modes)
+			if (m_params.m_bc7enc_rdo_bc7_weight_modes)
 			{
 				// Weight modes 5 and especially 6 more highly than the other modes.
 				if (m_has_alpha)
@@ -287,20 +301,20 @@ namespace rdo_bc
 				}
 			}
 
-			if (m_params.m_rdo_bc7_weight_low_frequency_partitions)
+			if (m_params.m_bc7enc_rdo_bc7_weight_low_frequency_partitions)
 			{
 				// Slightly prefer the lower frequency partition patterns.
 				m_bc7enc_pack_params.m_low_frequency_partition_weight = .9999f;
 			}
 
-			if (m_params.m_rdo_bc7_quant_mode6_endpoints)
+			if (m_params.m_bc7enc_rdo_bc7_quant_mode6_endpoints)
 			{
 				// As a good default, don't quantize mode 6 endpoints if the texture has alpha. This isn't required, but helps mask textures.
 				//if (!has_alpha)
 				m_bc7enc_pack_params.m_quant_mode6_endpoints = true;
 			}
 
-			if (m_params.m_rdo_bc7_pbit1_weighting)
+			if (m_params.m_bc7enc_rdo_bc7_pbit1_weighting)
 			{
 				// Favor p-bit 0 vs. 1, to slightly lower the entropy of output blocks with p-bits
 				m_bc7enc_pack_params.m_pbit1_weight = 1.3f;
@@ -352,13 +366,56 @@ namespace rdo_bc
 			}
 			else
 			{
-				printf("BC1 level: %u, use 3-color mode: %u, use 3-color mode for black: %u, bc1_mode: %u\nrdo_q: %f, lookback_window_size: %u, rdo_smooth_block_error_scale: %f\n",
-					m_params.m_bc1_quality_level, m_params.m_use_bc1_3color_mode, m_params.m_use_bc1_3color_mode_for_black, (int)m_params.m_bc1_mode, m_params.m_rdo_lambda, m_params.m_lookback_window_size, m_params.m_rdo_smooth_block_error_scale);
+				printf("BC1 level: %u, use 3-color mode: %u, use 3-color mode for black: %u, bc1_mode: %u\n",
+					m_params.m_bc1_quality_level, m_params.m_use_bc1_3color_mode, m_params.m_use_bc1_3color_mode_for_black, (int)m_params.m_bc1_mode);
 			}
 
 			if ((m_params.m_dxgi_format == DXGI_FORMAT_BC3_UNORM) || (m_params.m_dxgi_format == DXGI_FORMAT_BC4_UNORM) || (m_params.m_dxgi_format == DXGI_FORMAT_BC5_UNORM))
+			{
 				printf("Use high quality BC4 block encoder: %u, BC4 block radius: %u, use 6 value mode: %u, use 8 value mode: %u\n",
 					m_params.m_use_hq_bc345, m_params.m_bc345_search_rad, (m_params.m_bc345_mode_mask & 2) != 0, (m_params.m_bc345_mode_mask & 1) != 0);
+			}
+
+			printf("\nrdo_bc_params:\n");
+			printf("  Perceptual: %u\n", m_params.m_perceptual);
+			printf("  Y Flip: %u\n", m_params.m_y_flip);
+			printf("  DXGI format: 0x%X %s\n", m_params.m_dxgi_format, get_dxgi_format_string(m_params.m_dxgi_format));
+
+			printf("BC1-5 parameters:\n");
+			printf("  BC45 channels: %u %u\n", m_params.m_bc45_channel0, m_params.m_bc45_channel1);
+			printf("  BC1 approximation mode: %u\n", (int)m_params.m_bc1_mode);
+			printf("  Use BC1 3-color mode: %u\n", m_params.m_use_bc1_3color_mode);
+			printf("  Use BC1 3-color mode for black: %u\n", m_params.m_use_bc1_3color_mode_for_black);
+			printf("  BC1 quality level: %u\n", m_params.m_bc1_quality_level);
+			printf("  Use HQ BC345: %u\n", m_params.m_use_hq_bc345);
+			printf("  BC345 search radius: %u\n", m_params.m_bc345_search_rad);
+			printf("  BC345 mode mask: 0x%X\n", m_params.m_bc345_mode_mask);
+			
+			printf("BC7 parameters:\n");
+			printf("  Use bc7e: %u\n", m_params.m_use_bc7e);
+			printf("  BC7 uber level: %u\n", m_params.m_bc7_uber_level);
+
+			printf("RDO parameters:\n");
+			printf("  Lambda: %f\n", m_params.m_rdo_lambda);
+			printf("  Lookback window size: %u\n", m_params.m_lookback_window_size);
+			printf("  Custom lookback window size: %u\n", m_params.m_custom_lookback_window_size);
+			printf("  Try 2 matches: %u\n", m_params.m_rdo_try_2_matches);
+			printf("  Smooth block error scale: %f\n", m_params.m_rdo_smooth_block_error_scale);
+			printf("  Custom RDO smooth block error scale: %u\n", m_params.m_custom_rdo_smooth_block_error_scale);
+			printf("  Max smooth block std dev: %f\n", m_params.m_rdo_max_smooth_block_std_dev);
+			printf("  Allow relative movement: %u\n", m_params.m_rdo_allow_relative_movement);
+			printf("  Ultrasmooth block handling: %u\n", m_params.m_rdo_ultrasmooth_block_handling);
+			printf("  Multithreading: %u, max threads: %u\n", m_params.m_rdo_multithreading, m_params.m_rdo_max_threads);
+			
+			printf("bc7enc parameters:\n");
+			printf("  Mode 6 only: %u\n", m_params.m_bc7enc_mode6_only);
+			printf("  Max partitions to scan: %u\n", m_params.m_bc7enc_max_partitions_to_scan);
+			printf("  Quant mode 6 endpoints: %u\n", m_params.m_bc7enc_rdo_bc7_quant_mode6_endpoints);
+			printf("  Weight modes: %u\n", m_params.m_bc7enc_rdo_bc7_weight_modes);
+			printf("  Weight low freq partitions: %u\n", m_params.m_bc7enc_rdo_bc7_weight_low_frequency_partitions);
+			printf("  P-bit1 weighting: %u\n", m_params.m_bc7enc_rdo_bc7_pbit1_weighting);
+			printf("  Reduce entropy mode: %u\n", m_params.m_bc7enc_reduce_entropy);
+			printf("\n");
 		}
 
 		return true;

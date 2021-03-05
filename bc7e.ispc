@@ -2,7 +2,9 @@
 // Copyright (C) 2018-2020 Binomial LLC, All rights reserved. Apache 2.0 license - see LICENSE.
 // Typically compiled as: ispc -g -O2 "%(Filename).ispc" -o "$(TargetDir)%(Filename).obj" -h "$(ProjectDir)%(Filename)_ispc.h" --target=sse2,sse4,avx,avx2 --opt=fast-math --opt=disable-assertions
 // --opt=fast-math is optional (doesn't make much if any measurable difference). 
+// Thanks to ArasP for the determinism fix.
 
+#define BC7E_NON_DETERMINISTIC (0)
 #define BC7E_2SUBSET_CHECKERBOARD_PARTITION_INDEX (34)
 #define BC7E_BLOCK_SIZE (16)
 #define BC7E_MAX_PARTITIONS0 (16)
@@ -2804,11 +2806,13 @@ static uniform uint32_t estimate_partition_list(uniform uint32_t mode, const var
 			pSolutions[i].m_index = partition;
 		}
 
+#if BC7E_NON_DETERMINISTIC
 		if ((total_subsets == 2) && (partition == BC7E_2SUBSET_CHECKERBOARD_PARTITION_INDEX))
 		{
 			if (all(i >= HIGH_FREQUENCY_SORTED_PARTITION_THRESHOLD))
 				break;
 		}
+#endif
 
 	} // partition
 

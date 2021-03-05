@@ -69,22 +69,25 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${GCC_COMPILE_FLAGS} -D_DEBU
 
 set (BC7ENC_SRC_LIST ${COMMON_SRC_LIST}
 	bc7enc.cpp
+	bc7enc.h
 	bc7decomp.cpp
-
+	bc7decomp_ref.cpp
 	bc7decomp.h
 	lodepng.cpp	
+	lodepng.h
 	test.cpp
 	rgbcx.cpp
-	utils.cpp
-	utils.h
-	miniz.h
-	bc7enc.h
-	dds_defs.h
 	rgbcx.h
 	rgbcx_table4.h
 	rgbcx_table4_small.h
+	utils.cpp
+	utils.h
+	miniz.h
+	dds_defs.h
 	ert.cpp
 	ert.h
+	rdo_bc_encoder.cpp
+	rdo_bc_encoder.h
 	bc7e.ispc
 	)
 

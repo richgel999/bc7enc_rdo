@@ -1,9 +1,168 @@
 // File: utils.cpp
 #include "utils.h"
 #include "lodepng.h"
+#include "miniz.h"
 
 namespace utils 
 {
+		
+#define FLOOD_PUSH(y, xl, xr, dy) if (((y + (dy)) >= 0) && ((y + (dy)) < (int)m_height)) { stack.push_back(fill_segment(y, xl, xr, dy)); }
+
+// See http://www.realtimerendering.com/resources/GraphicsGems/gems/SeedFill.c
+uint32_t image_u8::flood_fill(int x, int y, const color_quad_u8& c, const color_quad_u8& b, std::vector<pixel_coord>* pSet_pixels)
+{
+	uint32_t total_set = 0;
+
+	if (!flood_fill_is_inside(x, y, b))
+		return 0;
+
+	std::vector<fill_segment> stack;
+	stack.reserve(64);
+
+	FLOOD_PUSH(y, x, x, 1);
+	FLOOD_PUSH(y + 1, x, x, -1);
+
+	while (stack.size())
+	{
+		fill_segment s = stack.back();
+		stack.pop_back();
+
+		int x1 = s.m_xl, x2 = s.m_xr, dy = s.m_dy;
+		y = s.m_y + s.m_dy;
+
+		for (x = x1; (x >= 0) && flood_fill_is_inside(x, y, b); x--)
+		{
+			(*this)(x, y) = c;
+			total_set++;
+			if (pSet_pixels)
+				pSet_pixels->push_back(pixel_coord(x, y));
+		}
+
+		int l;
+
+		if (x >= x1)
+			goto skip;
+
+		l = x + 1;
+		if (l < x1)
+			FLOOD_PUSH(y, l, x1 - 1, -dy);
+
+		x = x1 + 1;
+
+		do
+		{
+			for (; x <= ((int)m_width - 1) && flood_fill_is_inside(x, y, b); x++)
+			{
+				(*this)(x, y) = c;
+				total_set++;
+				if (pSet_pixels)
+					pSet_pixels->push_back(pixel_coord(x, y));
+			}
+			FLOOD_PUSH(y, l, x - 1, dy);
+
+			if (x > (x2 + 1))
+				FLOOD_PUSH(y, x2 + 1, x - 1, -dy);
+
+		skip:
+			for (x++; x <= x2 && !flood_fill_is_inside(x, y, b); x++)
+				;
+
+			l = x;
+		} while (x <= x2);
+	}
+
+	return total_set;
+}
+
+void image_u8::draw_line(int xs, int ys, int xe, int ye, const color_quad_u8& color)
+{
+	if (xs > xe)
+	{
+		std::swap(xs, xe);
+		std::swap(ys, ye);
+	}
+
+	int dx = xe - xs, dy = ye - ys;
+	if (!dx)
+	{
+		if (ys > ye)
+			std::swap(ys, ye);
+		for (int i = ys; i <= ye; i++)
+			set_pixel_clipped(xs, i, color);
+	}
+	else if (!dy)
+	{
+		for (int i = xs; i < xe; i++)
+			set_pixel_clipped(i, ys, color);
+	}
+	else if (dy > 0)
+	{
+		if (dy <= dx)
+		{
+			int e = 2 * dy - dx, e_no_inc = 2 * dy, e_inc = 2 * (dy - dx);
+			rasterize_line(xs, ys, xe, ye, 0, 1, e, e_inc, e_no_inc, color);
+		}
+		else
+		{
+			int e = 2 * dx - dy, e_no_inc = 2 * dx, e_inc = 2 * (dx - dy);
+			rasterize_line(xs, ys, xe, ye, 1, 1, e, e_inc, e_no_inc, color);
+		}
+	}
+	else
+	{
+		dy = -dy;
+		if (dy <= dx)
+		{
+			int e = 2 * dy - dx, e_no_inc = 2 * dy, e_inc = 2 * (dy - dx);
+			rasterize_line(xs, ys, xe, ye, 0, -1, e, e_inc, e_no_inc, color);
+		}
+		else
+		{
+			int e = 2 * dx - dy, e_no_inc = (2 * dx), e_inc = 2 * (dx - dy);
+			rasterize_line(xe, ye, xs, ys, 1, -1, e, e_inc, e_no_inc, color);
+		}
+	}
+}
+
+void image_u8::rasterize_line(int xs, int ys, int xe, int ye, int pred, int inc_dec, int e, int e_inc, int e_no_inc, const color_quad_u8& color)
+{
+	int start, end, var;
+
+	if (pred)
+	{
+		start = ys;
+		end = ye;
+		var = xs;
+		for (int i = start; i <= end; i++)
+		{
+			set_pixel_clipped(var, i, color);
+			if (e < 0)
+				e += e_no_inc;
+			else
+			{
+				var += inc_dec;
+				e += e_inc;
+			}
+		}
+	}
+	else
+	{
+		start = xs;
+		end = xe;
+		var = ys;
+		for (int i = start; i <= end; i++)
+		{
+			set_pixel_clipped(i, var, color);
+			if (e < 0)
+				e += e_no_inc;
+			else
+			{
+				var += inc_dec;
+				e += e_inc;
+			}
+		}
+	}
+}
 
 bool load_png(const char* pFilename, image_u8& img)
 {
@@ -420,8 +579,8 @@ vec4F compute_ssim(const image_u8& a, const image_u8& b, bool luma)
 		{
 			for (uint32_t x = 0; x < ta.width(); x++)
 			{
-				ta(x, y).set((uint8_t)ta(x, y).get_luma(), ta(x, y).a());
-				tb(x, y).set((uint8_t)tb(x, y).get_luma(), tb(x, y).a());
+				ta(x, y).set((uint8_t)ta(x, y).get_luma(), ta(x, y).a);
+				tb(x, y).set((uint8_t)tb(x, y).get_luma(), tb(x, y).a);
 			}
 		}
 	}
@@ -725,6 +884,18 @@ bool load_astc_file(const char* pFilename, block16_vec& blocks, uint32_t& width,
 
 	fclose(pFile);
 	return true;
+}
+
+uint32_t get_deflate_size(const void* pData, size_t data_size)
+{
+	size_t comp_size = 0;
+	void* pPre_RDO_Comp_data = tdefl_compress_mem_to_heap(pData, data_size, &comp_size, TDEFL_MAX_PROBES_MASK);// TDEFL_DEFAULT_MAX_PROBES);
+	mz_free(pPre_RDO_Comp_data);
+
+	if (comp_size > UINT32_MAX)
+		return UINT32_MAX;
+
+	return (uint32_t)comp_size;
 }
 
 } // namespace utils
