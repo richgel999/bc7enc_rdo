@@ -69,9 +69,10 @@ static int print_usage()
 	fprintf(stderr, "\nFor BC4 and BC5: Not all tools support reading DX9-style BC4/BC5 format files (or BC4/5 files at all). AMD Compressonator does.\n");
 	fprintf(stderr, "\nFor BC1, the engine/shader must ignore decoded texture alpha because the encoder utilizes transparent texel to get black/dark texels. Use -b to disable.\n");
 	fprintf(stderr, "\nReduced entropy/RDO encoding examples:\n");
-	fprintf(stderr, "\n\"bc7enc -e blah.png\" - Reduced entropy BC7 encoding (fast, but only 5-10%% gains)\n");
-	fprintf(stderr, "\"bc7enc -z1.0 -zc256 -zn blah.png\" - RDO BC7 with lambda 1.0, window size 256 bytes (default window is only 128), 2 matches per block for higher compression\n");
-	fprintf(stderr, "\"bc7enc -z1.0 -e -zc1024 blah.png\" - RDO BC7 with lambda 1.0, window size 1024 bytes for more gains (but slower), combined with reduced entropy BC7\n");
+	fprintf(stderr, "\n\"bc7enc -C -e blah.png\" - Reduced entropy BC7 encoding using bc7enc.cpp (extremely fast, but only 5-10%% gains, and only 4 BC7 modes)\n");
+	fprintf(stderr, "\"bc7enc -z1.0 -zc32 -ze blah.png\" - RDO BC7 with lambda 1.0, window size 32 bytes (default window is 128), 1 matches per block for faster compression\n");
+	fprintf(stderr, "\"bc7enc -z1.0 -zc256 blah.png\" - RDO BC7 with lambda 1.0, window size 256 bytes (default window is only 128), 2 matches per block for higher compression\n");
+	fprintf(stderr, "\"bc7enc -z1.0 -C -e -zc1024 blah.png\" - RDO BC7 with lambda 1.0, window size 1024 bytes for more gains (but slower), combined with reduced entropy BC7\n");
 	fprintf(stderr, "\"bc7enc -1 -z1.0 blah.png\" - RDO BC1 with lambda 1.0\n");
 
 #if SUPPORT_BC7E
