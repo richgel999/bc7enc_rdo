@@ -12,6 +12,8 @@ The next major focus will be improving the default smooth block handling and imp
 
 This repo was originally derived from [bc7enc](https://github.com/richgel999/bc7enc) and [bc7e](https://github.com/BinomialLLC/bc7e). Note this repo contains the latest version of bc7e.ispc, which has a determinism bug fix.
 
+Note: If you use this software in a product, attribution / credits is requested but not required.
+
 ### Compiling
 
 This build has been tested with MSVC 2019 x64 and clang 6.0.0 under Ubuntu v18.04.
