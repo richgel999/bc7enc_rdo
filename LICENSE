@@ -1,5 +1,8 @@
-All source code files in this repo are available under 2 licenses -- choose whichever you prefer.
 If you use this software in a product, attribution / credits is requested but not required.
+
+bc7e.ispc uses the Apache 2.0 license and is Copyright (C) 2019-2021 Binomial LLC
+
+All other source code files in this repo are available under 2 licenses -- choose whichever you prefer.
 
 ALTERNATIVE A - MIT License
 Copyright(c) 2020-2021 Richard Geldreich, Jr.
