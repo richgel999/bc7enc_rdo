@@ -151,7 +151,7 @@ For even higher quality per bit (this is incredibly slow):
 ### Dependencies
 There are no 3rd party code or library dependencies. utils.cpp/.h is only needed by the example command line tool. It uses C++11. The individual .cpp files are designed to be easily dropped into other codebases.
 
-For RDO post-processing of any block-based format: ert.cpp/.h. You provide this function an array of encoded blocks, an array of source/original 32bpp blocks, some parameters, and a pointer to a block decoder function for your format as a callback. It must return false if the passed in block data is invalid. (Make sure you *really* validate the block's data, because the ERT post-processor will inevitably call your callback with invalid blocks.) This transform should work on other texture formats, such as ETC1/2, EAC, and ASTC. The ERT works on block sizes ranging from 1x1 to 12x12. This file has no dependencies.
+For RDO post-processing of any block-based format: ert.cpp/.h. You provide this function an array of encoded blocks, an array of source/original 32bpp blocks, some parameters, and a pointer to a block decoder function for your format as a callback. It must return false if the passed in block data is invalid. (Make sure you *really* validate the block's data, because the ERT post-processor will inevitably call your callback with invalid blocks.) This transform works on most other texture formats, such as ETC1/2, EAC, and ASTC. The ERT works on block sizes ranging from 1x1 to 12x12. This file has no dependencies.
 
 For BC1-5 encoding/decoding: rgbcx.cpp/.h
 
