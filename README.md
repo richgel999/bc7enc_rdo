@@ -32,7 +32,7 @@ cmake .
 make
 ```
 
-Note the MSVC build and Linux builds enable OpenMP for faster compression.
+Note the MSVC and Linux builds enable OpenMP for faster compression.
 
 ### Examples
 
