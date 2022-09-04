@@ -2792,6 +2792,19 @@ namespace rgbcx
 			return 0;
 		}
 
+		// if we only have two values (min and max) the search radius can be set to zero (setting the endpoints directly)
+		bool has_two_values = true;
+		for (uint32_t i = 0; i < 16; i++) {
+			uint32_t val = pPixels[i * stride];
+			if (val != min_val && val != max_val) {
+				has_two_values = false;
+				break;
+			}
+		}
+		if (has_two_values) {
+			search_rad = 0;
+		}
+
 		uint32_t best_err = UINT32_MAX;
 		for (uint32_t mode = 0; mode < 2; mode++)
 		{
@@ -2817,8 +2830,9 @@ namespace rgbcx
 					else if (!trial_block.is_alpha6_block())
 						std::swap(trial_block.m_endpoints[0], trial_block.m_endpoints[1]);
 
-					uint8_t block_vals[8];
-					trial_block.get_block_values(block_vals, trial_block.m_endpoints[0], trial_block.m_endpoints[1]);
+					// note: block vals are expanded to 16-bit, as is the error
+					uint16_t block_vals16[8];
+					trial_block.get_block_values(block_vals16, trial_block.m_endpoints[0], trial_block.m_endpoints[1]);
 
 					uint32_t trial_err = 0;
 					uint8_t trial_sels[16];
@@ -2827,8 +2841,10 @@ namespace rgbcx
 					{
 						memcpy(trial_sels, pForce_selectors, 16);
 
-						for (uint32_t i = 0; i < 16; i++)
-							trial_err += squarei(block_vals[pForce_selectors[i]] - pPixels[i * stride]);
+						for (uint32_t i = 0; i < 16; i++) {
+							int val = pPixels[i * stride];
+							trial_err += squarei(block_vals16[pForce_selectors[i]] - ((val << 8) | val));
+						}
 					}
 					else
 					{
@@ -2838,7 +2854,8 @@ namespace rgbcx
 							uint32_t best_index = 0;
 							for (uint32_t j = 0; j < 8; j++)
 							{
-								uint32_t err = squarei(block_vals[j] - pPixels[i * stride]);
+								int val = pPixels[i * stride];
+								uint32_t err = squarei(block_vals16[j] - ((val << 8) | val));
 								if (err < best_index_err)
 								{
 									best_index_err = err;
@@ -2872,6 +2889,10 @@ namespace rgbcx
 						trial_block.m_selectors[5] = (uint8_t)(sel_vals >> 40);
 
 						memcpy(pDst_bytes, &trial_block, sizeof(bc4_block));
+						if (best_err == 0) {
+							// early out since we have a zero error
+							goto error_reached_zero;
+						}
 					} // if (trial_err < best_err)
 
 				} // hi_delta
@@ -2879,8 +2900,9 @@ namespace rgbcx
 			} // lo_delta
 
 		} // mode
+	error_reached_zero:
 
-		return best_err;
+		return best_err >> 8;
 	}
 
 	void encode_bc3(void* pDst, const uint8_t* pPixels, uint32_t flags, uint32_t total_orderings_to_try)
