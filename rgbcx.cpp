@@ -2798,10 +2798,13 @@ namespace rgbcx
 			if ((mode_flag & (1 << mode)) == 0)
 				continue;
 
-			for (int lo_delta = -(int)search_rad; lo_delta <= (int)search_rad; lo_delta++)
+			// the deltas go 0, -1, 1, -2, 2, -3, 3, etc., meaning 2-colour blocks are found first
+			for (int lo_count = 0; lo_count <= (int)search_rad << 1; lo_count++)
 			{
-				for (int hi_delta = -(int)search_rad; hi_delta <= (int)search_rad; hi_delta++)
+				int lo_delta = ((lo_count & 1) ? -lo_count : lo_count) >> 1;
+				for (int hi_count = 0; hi_count <= (int)search_rad << 1; hi_count++)
 				{
+					int hi_delta = ((hi_count & 1) ? -hi_count : hi_count) >> 1;
 					bc4_block trial_block;
 					trial_block.m_endpoints[0] = (uint8_t)clamp<int>(max_val + hi_delta, 0, 255);
 					trial_block.m_endpoints[1] = (uint8_t)clamp<int>(min_val + lo_delta, 0, 255);
@@ -2872,6 +2875,10 @@ namespace rgbcx
 						trial_block.m_selectors[5] = (uint8_t)(sel_vals >> 40);
 
 						memcpy(pDst_bytes, &trial_block, sizeof(bc4_block));
+						if (best_err == 0) {
+							// early out since we have a zero error
+							goto error_reached_zero;
+						}
 					} // if (trial_err < best_err)
 
 				} // hi_delta
@@ -2879,6 +2886,7 @@ namespace rgbcx
 			} // lo_delta
 
 		} // mode
+	error_reached_zero:
 
 		return best_err;
 	}
