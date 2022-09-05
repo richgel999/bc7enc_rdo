@@ -388,12 +388,6 @@ namespace rgbcx
 			return (selector_bits >> (((y * 4) + x) * cBC4SelectorBits)) & (cMaxSelectorValues - 1);
 		}
 
-		// Expands an 8-bit value to 14-bit
-		static inline uint32_t expand8to14(uint32_t val) {
-			return (val << 6) | (val >> 2);
-		}
-
-		// Interpolated values as 8-bit (as per BC3 alpha)
 		static inline uint32_t get_block_values6(uint8_t* pDst, uint32_t l, uint32_t h)
 		{
 			pDst[0] = static_cast<uint8_t>(l);
@@ -407,23 +401,6 @@ namespace rgbcx
 			return 6;
 		}
 
-		// Interpolated values expanded to 14-bit (for BC4/5)
-		static inline uint32_t get_block_values6(uint16_t* pDst, uint32_t l, uint32_t h)
-		{
-			uint32_t l14 = expand8to14(l);
-			uint32_t h14 = expand8to14(h);
-			pDst[0] = static_cast<uint16_t>(l14);
-			pDst[1] = static_cast<uint16_t>(h14);
-			pDst[2] = static_cast<uint16_t>((l14 * 4 + h14    ) / 5);
-			pDst[3] = static_cast<uint16_t>((l14 * 3 + h14 * 2) / 5);
-			pDst[4] = static_cast<uint16_t>((l14 * 2 + h14 * 3) / 5);
-			pDst[5] = static_cast<uint16_t>((l14     + h14 * 4) / 5);
-			pDst[6] = 0;
-			pDst[7] = static_cast<uint16_t>(expand8to14(255));
-			return 6;
-		}
-
-		// Interpolated values as 8-bit (as per BC3 alpha)
 		static inline uint32_t get_block_values8(uint8_t* pDst, uint32_t l, uint32_t h)
 		{
 			pDst[0] = static_cast<uint8_t>(l);
@@ -437,31 +414,7 @@ namespace rgbcx
 			return 8;
 		}
 
-		// Interpolated values expanded to 14-bit (for BC4/5)
-		static inline uint32_t get_block_values8(uint16_t* pDst, uint32_t l, uint32_t h)
-		{
-			uint32_t l14 = expand8to14(l);
-			uint32_t h14 = expand8to14(h);
-			pDst[0] = static_cast<uint16_t>(l14);
-			pDst[1] = static_cast<uint16_t>(h14);
-			pDst[2] = static_cast<uint16_t>((l14 * 6 + h14    ) / 7);
-			pDst[3] = static_cast<uint16_t>((l14 * 5 + h14 * 2) / 7);
-			pDst[4] = static_cast<uint16_t>((l14 * 4 + h14 * 3) / 7);
-			pDst[5] = static_cast<uint16_t>((l14 * 3 + h14 * 4) / 7);
-			pDst[6] = static_cast<uint16_t>((l14 * 2 + h14 * 5) / 7);
-			pDst[7] = static_cast<uint16_t>((l14     + h14 * 6) / 7);
-			return 8;
-		}
-
 		static inline uint32_t get_block_values(uint8_t* pDst, uint32_t l, uint32_t h)
-		{
-			if (l > h)
-				return get_block_values8(pDst, l, h);
-			else
-				return get_block_values6(pDst, l, h);
-		}
-
-		static inline uint32_t get_block_values(uint16_t* pDst, uint32_t l, uint32_t h)
 		{
 			if (l > h)
 				return get_block_values8(pDst, l, h);

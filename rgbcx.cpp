@@ -2792,29 +2792,19 @@ namespace rgbcx
 			return 0;
 		}
 
-		// if we only have two values (min and max) the search radius can be set to zero (setting the endpoints directly)
-		bool has_two_values = true;
-		for (uint32_t i = 0; i < 16; i++) {
-			uint32_t val = pPixels[i * stride];
-			if (val != min_val && val != max_val) {
-				has_two_values = false;
-				break;
-			}
-		}
-		if (has_two_values) {
-			search_rad = 0;
-		}
-
 		uint32_t best_err = UINT32_MAX;
 		for (uint32_t mode = 0; mode < 2; mode++)
 		{
 			if ((mode_flag & (1 << mode)) == 0)
 				continue;
 
-			for (int lo_delta = -(int)search_rad; lo_delta <= (int)search_rad; lo_delta++)
+			// the deltas go 0, -1, 1, -2, 2, -3, 3, etc., meaning 2-colour blocks are found first
+			for (int lo_count = 0; lo_count <= (int)search_rad << 1; lo_count++)
 			{
-				for (int hi_delta = -(int)search_rad; hi_delta <= (int)search_rad; hi_delta++)
+				int lo_delta = ((lo_count & 1) ? -lo_count : lo_count) >> 1;
+				for (int hi_count = 0; hi_count <= (int)search_rad << 1; hi_count++)
 				{
+					int hi_delta = ((hi_count & 1) ? -hi_count : hi_count) >> 1;
 					bc4_block trial_block;
 					trial_block.m_endpoints[0] = (uint8_t)clamp<int>(max_val + hi_delta, 0, 255);
 					trial_block.m_endpoints[1] = (uint8_t)clamp<int>(min_val + lo_delta, 0, 255);
@@ -2830,10 +2820,8 @@ namespace rgbcx
 					else if (!trial_block.is_alpha6_block())
 						std::swap(trial_block.m_endpoints[0], trial_block.m_endpoints[1]);
 
-					// note: block vals are expanded to 8:6 fixed point, as is the error,
-					// with 8:6 able to accumulate 16x the worse-case error (255.98 ^ 2)
-					uint16_t block_vals14[8];
-					trial_block.get_block_values(block_vals14, trial_block.m_endpoints[0], trial_block.m_endpoints[1]);
+					uint8_t block_vals[8];
+					trial_block.get_block_values(block_vals, trial_block.m_endpoints[0], trial_block.m_endpoints[1]);
 
 					uint32_t trial_err = 0;
 					uint8_t trial_sels[16];
@@ -2842,9 +2830,8 @@ namespace rgbcx
 					{
 						memcpy(trial_sels, pForce_selectors, 16);
 
-						for (uint32_t i = 0; i < 16; i++) {
-							trial_err += squarei(block_vals14[pForce_selectors[i]] - bc4_block::expand8to14(pPixels[i * stride]));
-						}
+						for (uint32_t i = 0; i < 16; i++) 
+							trial_err += squarei(block_vals[pForce_selectors[i]] - pPixels[i * stride]);
 					}
 					else
 					{
@@ -2854,7 +2841,7 @@ namespace rgbcx
 							uint32_t best_index = 0;
 							for (uint32_t j = 0; j < 8; j++)
 							{
-								uint32_t err = squarei(block_vals14[j] - bc4_block::expand8to14(pPixels[i * stride]));
+								uint32_t err = squarei(block_vals[j] - pPixels[i * stride]);
 								if (err < best_index_err)
 								{
 									best_index_err = err;
@@ -2901,8 +2888,7 @@ namespace rgbcx
 		} // mode
 	error_reached_zero:
 
-		// scale the error back to 8-bit from 8:6 fixed point (to match what was previously returned)
-		return (best_err + 63) >> 12;
+		return best_err;
 	}
 
 	void encode_bc3(void* pDst, const uint8_t* pPixels, uint32_t flags, uint32_t total_orderings_to_try)
