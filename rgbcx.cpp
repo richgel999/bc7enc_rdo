@@ -2830,7 +2830,7 @@ namespace rgbcx
 					{
 						memcpy(trial_sels, pForce_selectors, 16);
 
-						for (uint32_t i = 0; i < 16; i++) 
+						for (uint32_t i = 0; i < 16; i++)
 							trial_err += squarei(block_vals[pForce_selectors[i]] - pPixels[i * stride]);
 					}
 					else
