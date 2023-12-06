@@ -20,12 +20,12 @@ static int print_usage()
 	fprintf(stderr, "\nReads PNG files (with or without alpha channels) and packs them to BC1-5 or BC7/BPTC (the default).\nFor BC7, the tool uses either bc7enc.cpp (uses modes 1/5/6/7) or bc7e.ispc (all modes, -U option, the default if SUPPORT_BC7E was TRUE).\n");
 	fprintf(stderr, "Supports optional reduced entropy BC7 encoding (using -e, bc7enc.cpp only) and Rate Distortion\nOptimization (RDO - all encoders) for BC1-7 using -z# where # is lambda. Higher lambdas=more compressible files, but lower quality. Can also combine RDO with -e.\n");
 	fprintf(stderr, "By default, this tool compresses to BC7. A DX10 DDS file and a unpacked PNG file will be written\nto the current directory with the .dds/_unpacked.png/_unpacked_alpha.png suffixes.\n");
-	fprintf(stderr, "This tool does not yet support generating mipmaps (yet).\n");
 	fprintf(stderr, "\nUsage: bc7enc [-apng_filename] [options] input_filename.png [compressed_output.dds] [unpacked_output.png]\n\n");
 	fprintf(stderr, "-q Quiet mode (less debug/status output)\n");
 	fprintf(stderr, "-apng_filename Load G channel of PNG file into alpha channel of source image\n");
 	fprintf(stderr, "-g Don't write unpacked output PNG files (this disables PSNR metrics too).\n");
 	fprintf(stderr, "-y Flip source image along Y axis before packing.\n");
+	fprintf(stderr, "-mip Generate mipmaps.\n");
 	fprintf(stderr, "-o Write output files to the source file's directory, instead of the current directory.\n");
 	fprintf(stderr, "-1 Encode to BC1. Use -L# option to set the base BC1 encoder's quality (default is 18 - highest quality).\n");
 	fprintf(stderr, "-3 Encode to BC3. Use -L# option to set the base BC1 encoder's quality (default is 18 - highest quality).\n");
@@ -192,7 +192,7 @@ static int graph_mode(const std::string& graph_listing_file, rdo_bc::rdo_bc_para
 			return EXIT_FAILURE;
 
 		printf("Source image: %s %ux%u\n", filenames[file_index].c_str(), source_image.width(), source_image.height());
-				
+
 		for (uint32_t lambda_index = 0; lambda_index < TOTAL_LAMBDAS; lambda_index++)
 		{
 			rp.m_rdo_lambda = s_lambdas[lambda_index];
@@ -221,7 +221,7 @@ static int graph_mode(const std::string& graph_listing_file, rdo_bc::rdo_bc_para
 			}
 												
 			// Compress the output data losslessly using Deflate
-			const uint32_t output_data_size = encoder.get_total_blocks_size_in_bytes();
+			const uint32_t output_data_size = encoder.get_total_blocks_all_mips_size_in_bytes();
 			const uint32_t pre_rdo_comp_size = get_deflate_size(encoder.get_prerdo_blocks(), output_data_size);
 			const uint32_t comp_size = get_deflate_size(encoder.get_blocks(), output_data_size);
 
@@ -495,7 +495,14 @@ int main(int argc, char* argv[])
 				}
 				case 'm':
 				{
-					rp.m_bc1_mode = rgbcx::bc1_approx_mode::cBC1AMD;
+					if (strncmp(pArg, "-mip", 4) == 0)
+					{
+						rp.m_generate_mipmaps = true;
+					}
+					else if (strncmp(pArg, "-m", 2) == 0)
+					{
+						rp.m_bc1_mode = rgbcx::bc1_approx_mode::cBC1AMD;
+					}
 					break;
 				}
 				case 'r':
@@ -712,7 +719,7 @@ int main(int argc, char* argv[])
 		printf("Total processing time: %f secs\n", (double)(overall_end_t - overall_start_t) / CLOCKS_PER_SEC);
 
 	// Compress the output data losslessly using Deflate
-	const uint32_t output_data_size = encoder.get_total_blocks_size_in_bytes();
+	const uint32_t output_data_size = encoder.get_total_blocks_all_mips_size_in_bytes();
 	const uint32_t pre_rdo_comp_size = get_deflate_size(encoder.get_prerdo_blocks(), output_data_size);
 
 	float pre_rdo_lz_bits_per_texel = (pre_rdo_comp_size * 8.0f) / encoder.get_total_texels();
@@ -733,7 +740,7 @@ int main(int argc, char* argv[])
 		printf("RDO output data size: %u, LZ (Deflate) compressed file size: %u, %3.2f bits/texel, savings: %3.2f%%\n", output_data_size, (uint32_t)comp_size, lz_bits_per_texel, 
 			(lz_bits_per_texel != pre_rdo_lz_bits_per_texel) ? 100.0f - (lz_bits_per_texel * 100.0f) / pre_rdo_lz_bits_per_texel : 0.0f);
 			
-	if (!save_dds(dds_output_filename.c_str(), encoder.get_orig_width(), encoder.get_orig_height(),
+	if (!save_dds(dds_output_filename.c_str(), encoder.get_orig_width(), encoder.get_orig_height(), encoder.get_mip_levels(),
 		encoder.get_blocks(), pixel_format_bpp, rp.m_dxgi_format, rp.m_perceptual, force_dx10_dds))
 	{
 		fprintf(stderr, "Failed writing file \"%s\"\n", dds_output_filename.c_str());

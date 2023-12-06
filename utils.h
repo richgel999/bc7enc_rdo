@@ -2041,6 +2041,81 @@ private:
 	}
 };
 
+class image_u8_mip
+{
+public:
+	image_u8_mip()
+	{
+		m_levels.resize(0);
+	}
+
+	image_u8_mip(const image_u8& base_image)
+	{
+		m_levels.resize(1);
+		m_levels[0] = base_image;
+	}
+
+	inline void init(const image_u8& base_image)
+	{
+		m_levels.resize(1);
+		m_levels[0] = base_image;
+	}
+
+	inline uint32_t get_number_of_levels() const { return m_levels.size(); }
+
+	// FIXME: Avoid a copy here?
+	inline image_u8* get_level(uint32_t level)
+	{
+		assert(level >= 0 && level < m_levels.size());
+		return &m_levels[level];
+	}
+
+	// FIXME: Care about the clip rect?
+	inline void generate_mipmaps()
+	{
+		int levels = 1 + ilogb(std::max(m_levels[0].width(), m_levels[0].height()));
+		m_levels.resize(levels);
+
+		// FIXME: Different mipmap generation for normal maps
+
+		for (int i = 1; i < m_levels.size(); i++)
+		{
+			int prev_level = i - 1;
+			// FIXME: Don't make a copy of the entire image...?
+			image_u8& prev = m_levels[prev_level];
+
+			image_u8 next(prev.width() / 2, prev.height() / 2);
+
+			for (size_t y = 0; y < next.height(); y++)
+			{
+				for (size_t x = 0; x < next.width(); x++)
+				{
+					color_quad_u8 value0 = prev(x * 2 + 0, y * 2 + 0);
+					color_quad_u8 value1 = prev(x * 2 + 1, y * 2 + 0);
+					color_quad_u8 value2 = prev(x * 2 + 0, y * 2 + 1);
+					color_quad_u8 value3 = prev(x * 2 + 1, y * 2 + 1);
+
+					vec<4, uint32_t> avg;
+					avg.set_x((uint32_t)value0.r + (uint32_t)value1.r + (uint32_t)value2.r + (uint32_t)value3.r);
+					avg.set_y((uint32_t)value0.g + (uint32_t)value1.g + (uint32_t)value2.g + (uint32_t)value3.g);
+					avg.set_z((uint32_t)value0.b + (uint32_t)value1.b + (uint32_t)value2.b + (uint32_t)value3.b);
+					// FIXME: Setting for choosing something like perserve coverage...
+					avg.set_w((uint32_t)value0.a + (uint32_t)value1.a + (uint32_t)value2.a + (uint32_t)value3.a);
+					avg = avg / 4.0f;
+
+					color_quad_u8 value((uint8_t)avg.get_x(), (uint8_t)avg.get_y(), (uint8_t)avg.get_z(), (uint8_t)avg.get_w());
+
+					next(x, y) = value;
+				}
+			}
+
+			m_levels[i] = next;
+		}
+	}
+private:
+	std::vector<image_u8> m_levels;
+};
+
 bool load_png(const char* pFilename, image_u8& img);
 
 bool save_png(const char* pFilename, const image_u8& img, bool save_alpha);
@@ -2373,7 +2448,7 @@ struct block16
 
 typedef std::vector<block16> block16_vec;
 
-bool save_dds(const char* pFilename, uint32_t width, uint32_t height, const void* pBlocks, uint32_t pixel_format_bpp, DXGI_FORMAT dxgi_format, bool srgb, bool force_dx10_header);
+bool save_dds(const char* pFilename, uint32_t width, uint32_t height, uint32_t mip_levels, const void* pBlocks, uint32_t pixel_format_bpp, DXGI_FORMAT dxgi_format, bool srgb, bool force_dx10_header);
 
 void strip_extension(std::string& s);
 void strip_path(std::string& s);

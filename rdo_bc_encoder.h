@@ -38,6 +38,8 @@ namespace rdo_bc
 			m_bc45_channel0 = 0;
 			m_bc45_channel1 = 1;
 
+			m_generate_mipmaps = false;
+
 			m_bc1_mode = rgbcx::bc1_approx_mode::cBC1Ideal;
 			m_use_bc1_3color_mode = true;
 
@@ -91,6 +93,8 @@ namespace rdo_bc
 		bool m_y_flip;
 		uint32_t m_bc45_channel0;
 		uint32_t m_bc45_channel1;
+
+		bool m_generate_mipmaps;
 
 		rgbcx::bc1_approx_mode m_bc1_mode;
 		bool m_use_bc1_3color_mode;
@@ -155,10 +159,11 @@ namespace rdo_bc
 
 		uint32_t get_orig_width() const { return m_orig_width; }
 		uint32_t get_orig_height() const { return m_orig_height; }
+		uint32_t get_mip_levels() const { return m_source_image_mips.get_number_of_levels(); }
 		uint32_t get_blocks_x() const { return m_blocks_x; }
 		uint32_t get_blocks_y() const { return m_blocks_y; }
-		uint32_t get_total_blocks() const { return m_total_blocks; }
-		uint32_t get_total_blocks_size_in_bytes() const { return m_total_blocks * m_bytes_per_block; }
+		uint32_t get_total_blocks_all_mips() const { return m_total_blocks_all_mips; }
+		uint32_t get_total_blocks_all_mips_size_in_bytes() const { return m_total_blocks_all_mips * m_bytes_per_block; }
 		uint32_t get_bytes_per_block() const { return m_bytes_per_block; }
 		uint32_t get_pixel_format_bpp() const { return m_pixel_format_bpp; }
 		uint32_t get_total_texels() const { return m_total_texels; }
@@ -166,13 +171,22 @@ namespace rdo_bc
 								
 	private:
 		const utils::image_u8* m_pOrig_source_image;
+		utils::image_u8_mip m_source_image_mips;
 		utils::image_u8 m_source_image;
 		rdo_bc_params m_params;
 
 		uint32_t m_orig_width, m_orig_height;
-		uint32_t m_blocks_x, m_blocks_y, m_total_blocks, m_bytes_per_block, m_pixel_format_bpp;
-		uint32_t m_total_texels;
+		uint32_t m_bytes_per_block, m_pixel_format_bpp;
 		bool m_has_alpha;
+
+		// For all mip levels
+		uint32_t m_total_blocks_x, m_total_blocks_y, m_total_blocks_all_mips;
+		// For the current mip level
+		uint32_t m_blocks_x, m_blocks_y, m_total_blocks;
+		// FIXME: is this for the current mip level??
+		uint32_t m_total_texels;
+
+		
 
 		utils::block8_vec m_packed_image8;
 		utils::block16_vec m_packed_image16;

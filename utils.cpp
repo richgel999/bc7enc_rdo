@@ -593,9 +593,9 @@ vec4F compute_ssim(const image_u8& a, const image_u8& b, bool luma)
 	return compute_ssim(fta, ftb);
 }
 
-bool save_dds(const char* pFilename, uint32_t width, uint32_t height, const void* pBlocks, uint32_t pixel_format_bpp, DXGI_FORMAT dxgi_format, bool srgb, bool force_dx10_header)
+bool save_dds(const char* pFilename, uint32_t width, uint32_t height, uint32_t mip_levels, const void* pBlocks, uint32_t pixel_format_bpp, DXGI_FORMAT dxgi_format, bool srgb, bool force_dx10_header)
 {
-	(void)srgb;
+	//(void)srgb;
 
 	FILE* pFile = NULL;
 #ifdef _MSC_VER
@@ -615,10 +615,12 @@ bool save_dds(const char* pFilename, uint32_t width, uint32_t height, const void
 	memset(&desc, 0, sizeof(desc));
 
 	desc.dwSize = sizeof(desc);
-	desc.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT | DDSD_CAPS;
+	desc.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT | DDSD_CAPS | DDSD_MIPMAPCOUNT;
 
 	desc.dwWidth = width;
 	desc.dwHeight = height;
+
+	desc.dwMipMapCount = mip_levels;
 
 	desc.ddsCaps.dwCaps = DDSCAPS_TEXTURE;
 	desc.ddpfPixelFormat.dwSize = sizeof(desc.ddpfPixelFormat);
@@ -658,15 +660,28 @@ bool save_dds(const char* pFilename, uint32_t width, uint32_t height, const void
 
 		// Not all tools support DXGI_FORMAT_BC7_UNORM_SRGB (like NVTT), but ddsview in DirectXTex pays attention to it. So not sure what to do here.
 		// For best compatibility just write DXGI_FORMAT_BC7_UNORM.
-		//hdr10.dxgiFormat = srgb ? DXGI_FORMAT_BC7_UNORM_SRGB : DXGI_FORMAT_BC7_UNORM;
-		hdr10.dxgiFormat = dxgi_format; // DXGI_FORMAT_BC7_UNORM;
+		hdr10.dxgiFormat = srgb ? DXGI_FORMAT_BC7_UNORM_SRGB : DXGI_FORMAT_BC7_UNORM;
+		//hdr10.dxgiFormat = dxgi_format; // DXGI_FORMAT_BC7_UNORM;
 		hdr10.resourceDimension = D3D10_RESOURCE_DIMENSION_TEXTURE2D;
 		hdr10.arraySize = 1;
 
 		fwrite(&hdr10, sizeof(hdr10), 1, pFile);
 	}
 
-	fwrite(pBlocks, desc.lPitch, 1, pFile);
+	// Write out the mipmaps
+	uint32_t mipWidth = width;
+	uint32_t mipHeight = height;
+	char* block_ptr = (char*)pBlocks;
+	for (size_t i = 0; i < mip_levels; i++)
+	{
+		// pixel_format_bpp * 2 = bytes per pixel
+		uint32_t bytes = std::max(1u, ((mipWidth + 3) / 4)) * std::max(1u, ((mipHeight + 3) / 4)) * pixel_format_bpp * 2;
+		fwrite(block_ptr, bytes, 1, pFile);
+		block_ptr += bytes;
+
+		mipWidth /= 2;
+		mipHeight /= 2;
+	}
 
 	if (fclose(pFile) == EOF)
 	{
