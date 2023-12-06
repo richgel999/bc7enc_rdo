@@ -388,6 +388,8 @@ namespace rdo_bc
 			printf("  Perceptual: %u\n", m_params.m_perceptual);
 			printf("  Y Flip: %u\n", m_params.m_y_flip);
 			printf("  DXGI format: 0x%X %s\n", m_params.m_dxgi_format, get_dxgi_format_string(m_params.m_dxgi_format));
+			printf("  Generate Mipmaps: %u\n", m_params.m_generate_mipmaps);
+			printf("    Generation method: %s\n", get_mipmap_generation_method_name(m_params.m_mipmap_method));
 
 			printf("BC1-5 parameters:\n");
 			printf("  BC45 channels: %u %u\n", m_params.m_bc45_channel0, m_params.m_bc45_channel1);
@@ -475,7 +477,11 @@ namespace rdo_bc
 		m_source_image_mips.init(m_source_image);
 		if (m_params.m_generate_mipmaps)
 		{
-			m_source_image_mips.generate_mipmaps();
+			
+			clock_t start = clock();
+			m_source_image_mips.generate_mipmaps(m_params.m_mipmap_method);
+			clock_t end = clock();
+			printf("Generating mipmaps took: %f s\n", (double)(end - start) / CLOCKS_PER_SEC);
 
 			// All mip levels fit in 2*x * 2*y blocks
 			m_total_blocks_x = m_blocks_x + m_blocks_x;
@@ -603,89 +609,107 @@ namespace rdo_bc
 		else
 #endif
 		{
-			// FIXME: Implement mip generation for these encoders too!
-#pragma omp parallel for
-			for (int by = 0; by < (int)m_blocks_y; by++)
+			int32_t image_start_block_offset = 0;
+			for (uint32_t ix = 0; ix < static_cast<int32_t>(m_source_image_mips.get_number_of_levels()); ix++)
 			{
-				for (uint32_t bx = 0; bx < m_blocks_x; bx++)
+				printf("Encoding mip: %i\n", ix);
+				// FIXME: Avoid copy?
+				image_u8& mip_image = *m_source_image_mips.get_level(ix);
+
+				// FIXME: Do we really need to calculate these for every image?
+				uint32_t blocks_x = std::max(1u, mip_image.width() / 4);
+				uint32_t blocks_y = std::max(1u, mip_image.height() / 4);
+
+				bool clamp_block = (mip_image.width() < 4) || (mip_image.height() < 4);
+
+#pragma omp parallel for
+				for (int by = 0; by < (int)blocks_y; by++)
 				{
-					color_quad_u8 pixels[16];
-
-					m_source_image.get_block(bx, by, 4, 4, pixels);
-
-					switch (m_params.m_dxgi_format)
+					for (uint32_t bx = 0; bx < blocks_x; bx++)
 					{
-					case DXGI_FORMAT_BC1_UNORM:
-					{
-						block8* pBlock = &m_packed_image8[bx + by * m_blocks_x];
+						color_quad_u8 pixels[16];
 
-						rgbcx::encode_bc1(m_params.m_bc1_quality_level, pBlock, &pixels[0].m_c[0], m_params.m_use_bc1_3color_mode, m_params.m_use_bc1_3color_mode_for_black);
-						break;
-					}
-					case DXGI_FORMAT_BC3_UNORM:
-					{
-						block16* pBlock = &m_packed_image16[bx + by * m_blocks_x];
-
-						if (m_params.m_use_hq_bc345)
-							rgbcx::encode_bc3_hq(m_params.m_bc1_quality_level, pBlock, &pixels[0].m_c[0], m_params.m_bc345_search_rad, m_params.m_bc345_mode_mask);
+						if (clamp_block)
+							mip_image.get_block_clamped(bx, by, 4, 4, pixels);
 						else
-							rgbcx::encode_bc3(m_params.m_bc1_quality_level, pBlock, &pixels[0].m_c[0]);
-						break;
-					}
-					case DXGI_FORMAT_BC4_UNORM:
-					{
-						block8* pBlock = &m_packed_image8[bx + by * m_blocks_x];
+							mip_image.get_block(bx, by, 4, 4, pixels);
 
-						if (m_params.m_use_hq_bc345)
-							rgbcx::encode_bc4_hq(pBlock, &pixels[0].m_c[m_params.m_bc45_channel0], 4, m_params.m_bc345_search_rad, m_params.m_bc345_mode_mask);
-						else
-							rgbcx::encode_bc4(pBlock, &pixels[0].m_c[m_params.m_bc45_channel0], 4);
-						break;
-					}
-					case DXGI_FORMAT_BC5_UNORM:
-					{
-						block16* pBlock = &m_packed_image16[bx + by * m_blocks_x];
+						switch (m_params.m_dxgi_format)
+						{
+						case DXGI_FORMAT_BC1_UNORM:
+						{
+							block8* pBlock = &m_packed_image8[image_start_block_offset + (bx + by * blocks_x)];
 
-						if (m_params.m_use_hq_bc345)
-							rgbcx::encode_bc5_hq(pBlock, &pixels[0].m_c[0], m_params.m_bc45_channel0, m_params.m_bc45_channel1, 4, m_params.m_bc345_search_rad, m_params.m_bc345_mode_mask);
-						else
-							rgbcx::encode_bc5(pBlock, &pixels[0].m_c[0], m_params.m_bc45_channel0, m_params.m_bc45_channel1, 4);
-						break;
-					}
-					case DXGI_FORMAT_BC7_UNORM:
-					{
-						block16* pBlock = &m_packed_image16[bx + by * m_blocks_x];
+							rgbcx::encode_bc1(m_params.m_bc1_quality_level, pBlock, &pixels[0].m_c[0], m_params.m_use_bc1_3color_mode, m_params.m_use_bc1_3color_mode_for_black);
+							break;
+						}
+						case DXGI_FORMAT_BC3_UNORM:
+						{
+							block16* pBlock = &m_packed_image16[image_start_block_offset + (bx + by * blocks_x)];
 
-						bc7enc_compress_block(pBlock, pixels, &m_bc7enc_pack_params);
+							if (m_params.m_use_hq_bc345)
+								rgbcx::encode_bc3_hq(m_params.m_bc1_quality_level, pBlock, &pixels[0].m_c[0], m_params.m_bc345_search_rad, m_params.m_bc345_mode_mask);
+							else
+								rgbcx::encode_bc3(m_params.m_bc1_quality_level, pBlock, &pixels[0].m_c[0]);
+							break;
+						}
+						case DXGI_FORMAT_BC4_UNORM:
+						{
+							block8* pBlock = &m_packed_image8[image_start_block_offset + (bx + by * blocks_x)];
+
+							if (m_params.m_use_hq_bc345)
+								rgbcx::encode_bc4_hq(pBlock, &pixels[0].m_c[m_params.m_bc45_channel0], 4, m_params.m_bc345_search_rad, m_params.m_bc345_mode_mask);
+							else
+								rgbcx::encode_bc4(pBlock, &pixels[0].m_c[m_params.m_bc45_channel0], 4);
+							break;
+						}
+						case DXGI_FORMAT_BC5_UNORM:
+						{
+							block16* pBlock = &m_packed_image16[image_start_block_offset + (bx + by * blocks_x)];
+
+							if (m_params.m_use_hq_bc345)
+								rgbcx::encode_bc5_hq(pBlock, &pixels[0].m_c[0], m_params.m_bc45_channel0, m_params.m_bc45_channel1, 4, m_params.m_bc345_search_rad, m_params.m_bc345_mode_mask);
+							else
+								rgbcx::encode_bc5(pBlock, &pixels[0].m_c[0], m_params.m_bc45_channel0, m_params.m_bc45_channel1, 4);
+							break;
+						}
+						case DXGI_FORMAT_BC7_UNORM:
+						{
+							block16* pBlock = &m_packed_image16[image_start_block_offset + (bx + by * blocks_x)];
+
+							bc7enc_compress_block(pBlock, pixels, &m_bc7enc_pack_params);
 
 #pragma omp critical
-						{
-							uint32_t mode = ((uint8_t*)pBlock)[0];
-							for (uint32_t m = 0; m <= 7; m++)
 							{
-								if (mode & (1 << m))
+								uint32_t mode = ((uint8_t*)pBlock)[0];
+								for (uint32_t m = 0; m <= 7; m++)
 								{
-									bc7_mode_hist[m]++;
-									break;
+									if (mode & (1 << m))
+									{
+										bc7_mode_hist[m]++;
+										break;
+									}
 								}
 							}
+
+							break;
 						}
-
-						break;
+						default:
+						{
+							assert(0);
+							break;
+						}
+						}
 					}
-					default:
+
+					if (m_params.m_status_output)
 					{
-						assert(0);
-						break;
-					}
+						if ((by & 127) == 0)
+							printf(".");
 					}
 				}
 
-				if (m_params.m_status_output)
-				{
-					if ((by & 127) == 0)
-						printf(".");
-				}
+				image_start_block_offset += blocks_x * blocks_y;
 			}
 		}
 

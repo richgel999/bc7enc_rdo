@@ -39,6 +39,7 @@ namespace rdo_bc
 			m_bc45_channel1 = 1;
 
 			m_generate_mipmaps = false;
+			m_mipmap_method = utils::mipmap_generation_method_LinearBox;
 
 			m_bc1_mode = rgbcx::bc1_approx_mode::cBC1Ideal;
 			m_use_bc1_3color_mode = true;
@@ -95,6 +96,7 @@ namespace rdo_bc
 		uint32_t m_bc45_channel1;
 
 		bool m_generate_mipmaps;
+		utils::mipmap_generation_method m_mipmap_method;
 
 		rgbcx::bc1_approx_mode m_bc1_mode;
 		bool m_use_bc1_3color_mode;

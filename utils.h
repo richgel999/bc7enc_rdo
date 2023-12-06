@@ -1780,6 +1780,30 @@ inline uint32_t color_distance(bool perceptual, const color_quad_u8& e1, const c
 		return e1.squared_distance(e2, alpha);
 }
 
+inline color_quad_u8 sRGB_to_linear(color_quad_u8 sRGB)
+{
+	vec3F fvec(sRGB.r / 255.f, sRGB.g / 255.f, sRGB.b / 255.f);
+	for (int i = 0; i < vec3F::num_elements; i++)
+		if (fvec[i] < 0.04045f)
+			fvec[i] = fvec[i] / 12.92f;
+		else
+			fvec[i] = powf((fvec[i] + 0.055f) / 1.055f, 2.4f);
+	color_quad_u8 linear((uint8_t)(fvec[0] * 255), (uint8_t)(fvec[1] * 255), (uint8_t)(fvec[2] * 255), sRGB[3]);
+	return linear;
+}
+
+inline color_quad_u8 linear_to_sRGB(color_quad_u8 linear)
+{
+	vec3F fvec(linear.r / 255.f, linear.g / 255.f, linear.b / 255.f);
+	for (int i = 0; i < vec3F::num_elements; i++)
+		if (fvec[i] < 0.0031308f)
+			fvec[i] = fvec[i] * 12.92f;
+		else
+			fvec[i] = 1.055f * powf(fvec[i], 1.0f / 2.4f) - 0.055f;
+	color_quad_u8 sRGB((uint8_t)(fvec[0] * 255), (uint8_t)(fvec[1] * 255), (uint8_t)(fvec[2] * 255), linear[3]);
+	return sRGB;
+}
+
 extern color_quad_u8 g_white_color_u8, g_black_color_u8, g_red_color_u8, g_green_color_u8, g_blue_color_u8, g_yellow_color_u8, g_purple_color_u8, g_magenta_color_u8, g_cyan_color_u8;
 
 class image_u8
@@ -2041,6 +2065,27 @@ private:
 	}
 };
 
+typedef enum mipmap_generation_method : uint32_t {
+	mipmap_generation_method_LinearBox,
+	mipmap_generation_method_sRGBBox,
+	mipmap_generation_method_NormalMap,
+} mipmap_generation_method;
+
+inline const char* get_mipmap_generation_method_name(mipmap_generation_method method)
+{
+	switch (method)
+	{
+	case utils::mipmap_generation_method_LinearBox:
+		return "linear";
+	case utils::mipmap_generation_method_sRGBBox:
+		return "sRGB";
+	case utils::mipmap_generation_method_NormalMap:
+		return "normal map";
+	default:
+		return "unknown";
+	}
+}
+
 class image_u8_mip
 {
 public:
@@ -2071,12 +2116,10 @@ public:
 	}
 
 	// FIXME: Care about the clip rect?
-	inline void generate_mipmaps()
+	inline void generate_mipmaps(mipmap_generation_method method)
 	{
 		int levels = 1 + ilogb(std::max(m_levels[0].width(), m_levels[0].height()));
 		m_levels.resize(levels);
-
-		// FIXME: Different mipmap generation for normal maps
 
 		for (int i = 1; i < m_levels.size(); i++)
 		{
@@ -2084,7 +2127,7 @@ public:
 			// FIXME: Don't make a copy of the entire image...?
 			image_u8& prev = m_levels[prev_level];
 
-			image_u8 next(prev.width() / 2, prev.height() / 2);
+			image_u8 next(std::max(1u, prev.width() / 2), std::max(1u, prev.height() / 2));
 
 			for (size_t y = 0; y < next.height(); y++)
 			{
@@ -2095,15 +2138,62 @@ public:
 					color_quad_u8 value2 = prev(x * 2 + 0, y * 2 + 1);
 					color_quad_u8 value3 = prev(x * 2 + 1, y * 2 + 1);
 
-					vec<4, uint32_t> avg;
-					avg.set_x((uint32_t)value0.r + (uint32_t)value1.r + (uint32_t)value2.r + (uint32_t)value3.r);
-					avg.set_y((uint32_t)value0.g + (uint32_t)value1.g + (uint32_t)value2.g + (uint32_t)value3.g);
-					avg.set_z((uint32_t)value0.b + (uint32_t)value1.b + (uint32_t)value2.b + (uint32_t)value3.b);
-					// FIXME: Setting for choosing something like perserve coverage...
-					avg.set_w((uint32_t)value0.a + (uint32_t)value1.a + (uint32_t)value2.a + (uint32_t)value3.a);
-					avg = avg / 4.0f;
+					// FIXME: Maybe factor out these functions to make this more readable.
+					vec<4, uint32_t> fvalue{};
+					switch (method)
+					{
+					case mipmap_generation_method_LinearBox:
+					// FIXME: Make this it's own thing
+						fvalue.set_x((uint32_t)value0.r + (uint32_t)value1.r + (uint32_t)value2.r + (uint32_t)value3.r);
+						fvalue.set_y((uint32_t)value0.g + (uint32_t)value1.g + (uint32_t)value2.g + (uint32_t)value3.g);
+						fvalue.set_z((uint32_t)value0.b + (uint32_t)value1.b + (uint32_t)value2.b + (uint32_t)value3.b);
+						fvalue = fvalue / 4.0f;
+						break;
+					case mipmap_generation_method_sRGBBox:
+						value0 = sRGB_to_linear(value0);
+						value1 = sRGB_to_linear(value1);
+						value2 = sRGB_to_linear(value2);
+						value3 = sRGB_to_linear(value3);
+						fvalue.set_x((uint32_t)value0.r + (uint32_t)value1.r + (uint32_t)value2.r + (uint32_t)value3.r);
+						fvalue.set_y((uint32_t)value0.g + (uint32_t)value1.g + (uint32_t)value2.g + (uint32_t)value3.g);
+						fvalue.set_z((uint32_t)value0.b + (uint32_t)value1.b + (uint32_t)value2.b + (uint32_t)value3.b);
+						fvalue = fvalue / 4.0f;
+						break;
+					case mipmap_generation_method_NormalMap:
+						// FIXME: Figure out if this is something we want...
 
-					color_quad_u8 value((uint8_t)avg.get_x(), (uint8_t)avg.get_y(), (uint8_t)avg.get_z(), (uint8_t)avg.get_w());
+						vec<3, float> normal0(value0.r / 255.0f, value0.g / 255.0f, value0.b / 255.0f);
+						vec<3, float> normal1(value1.r / 255.0f, value1.g / 255.0f, value1.b / 255.0f);
+						vec<3, float> normal2(value2.r / 255.0f, value2.g / 255.0f, value2.b / 255.0f);
+						vec<3, float> normal3(value3.r / 255.0f, value3.g / 255.0f, value3.b / 255.0f);
+
+						// Only unpack if there is normal data in the sample
+						if (normal0 != vec3F(0)) normal0 = (normal0 * 2.0f) - vec3F(1.0f);
+						if (normal1 != vec3F(0)) normal1 = (normal1 * 2.0f) - vec3F(1.0f);
+						if (normal2 != vec3F(0)) normal2 = (normal2 * 2.0f) - vec3F(1.0f);
+						if (normal3 != vec3F(0)) normal3 = (normal3 * 2.0f) - vec3F(1.0f);
+
+						// FIXME: Divide with how many samples where != 0.
+						vec<3, float> normal = (normal0 + normal1 + normal2 + normal3) / 4.0f;
+						if (normal != vec3F(0))
+						{
+							normal.normalize3_in_place();
+							normal = (normal * 0.5f) + vec3F(0.5f);
+						}
+						
+						fvalue.set_x((uint32_t)(normal.get_x() * 255));
+						fvalue.set_y((uint32_t)(normal.get_y() * 255));
+						fvalue.set_z((uint32_t)(normal.get_z() * 255));
+						break;
+					}
+
+					// FIXME: Setting for choosing something like perserve coverage...
+					fvalue.set_w(((uint32_t)value0.a + (uint32_t)value1.a + (uint32_t)value2.a + (uint32_t)value3.a) / 4);
+
+					color_quad_u8 value((uint8_t)fvalue.get_x(), (uint8_t)fvalue.get_y(), (uint8_t)fvalue.get_z(), (uint8_t)fvalue.get_w());
+
+					if (method == mipmap_generation_method_sRGBBox)
+						value = linear_to_sRGB(value);
 
 					next(x, y) = value;
 				}
