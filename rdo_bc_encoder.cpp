@@ -178,11 +178,15 @@ namespace rdo_bc
 
 	rdo_bc_encoder::rdo_bc_encoder() :
 		m_pOrig_source_image(nullptr),
+		m_source_image_mips(),
 		m_orig_width(0),
 		m_orig_height(0),
 		m_blocks_x(0),
 		m_blocks_y(0),
+		m_total_blocks_x(0),
+		m_total_blocks_y(0),
 		m_total_blocks(0),
+		m_total_blocks_all_mips(0),
 		m_bytes_per_block(0),
 		m_pixel_format_bpp(0),
 		m_total_texels(0),
@@ -203,6 +207,9 @@ namespace rdo_bc
 		m_blocks_x = 0;
 		m_blocks_y = 0;
 		m_total_blocks = 0;
+		m_total_blocks_x = 0;
+		m_total_blocks_y = 0;
+		m_total_blocks_all_mips = 0;
 		m_bytes_per_block = 0;
 		m_pixel_format_bpp = 0;
 		m_total_texels = 0;
@@ -224,6 +231,7 @@ namespace rdo_bc
 	{
 		clear();
 
+		// The original image is the highest mip level
 		m_pOrig_source_image = &src_image;
 		m_params = params;
 
@@ -380,6 +388,8 @@ namespace rdo_bc
 			printf("  Perceptual: %u\n", m_params.m_perceptual);
 			printf("  Y Flip: %u\n", m_params.m_y_flip);
 			printf("  DXGI format: 0x%X %s\n", m_params.m_dxgi_format, get_dxgi_format_string(m_params.m_dxgi_format));
+			printf("  Generate Mipmaps: %u\n", m_params.m_generate_mipmaps);
+			printf("    Generation method: %s\n", get_mipmap_generation_method_name(m_params.m_mipmap_method));
 
 			printf("BC1-5 parameters:\n");
 			printf("  BC45 channels: %u %u\n", m_params.m_bc45_channel0, m_params.m_bc45_channel1);
@@ -463,6 +473,28 @@ namespace rdo_bc
 		m_blocks_x = m_source_image.width() / 4;
 		m_blocks_y = m_source_image.height() / 4;
 		m_total_blocks = m_blocks_x * m_blocks_y;
+		
+		m_source_image_mips.init(m_source_image);
+		if (m_params.m_generate_mipmaps)
+		{
+			
+			clock_t start = clock();
+			m_source_image_mips.generate_mipmaps(m_params.m_mipmap_method);
+			clock_t end = clock();
+			printf("Generating mipmaps took: %f s\n", (double)(end - start) / CLOCKS_PER_SEC);
+
+			// All mip levels fit in 2*x * 2*y blocks
+			m_total_blocks_x = m_blocks_x + m_blocks_x;
+			m_total_blocks_y = m_blocks_x + m_blocks_y;
+		}
+		else
+		{
+			m_total_blocks_x = m_blocks_x;
+			m_total_blocks_y = m_blocks_x;
+		}
+
+		m_total_blocks_all_mips = m_total_blocks_x * m_total_blocks_y;
+		// FIXME: Is this per mip or for all mips?
 		m_total_texels = m_total_blocks * 16;
 
 		bool has_alpha = false;
@@ -485,9 +517,9 @@ namespace rdo_bc
 		}
 				
 		if (m_pixel_format_bpp == 8)
-			m_packed_image16.resize(m_total_blocks);
+			m_packed_image16.resize(m_total_blocks_all_mips);
 		else
-			m_packed_image8.resize(m_total_blocks);
+			m_packed_image8.resize(m_total_blocks_all_mips);
 
 		return true;
 	}
@@ -505,41 +537,62 @@ namespace rdo_bc
 			if (m_params.m_status_output)
 				printf("Using bc7e: ");
 
-#pragma omp parallel for
-			for (int32_t by = 0; by < static_cast<int32_t>(m_blocks_y); by++)
+			// FIXME: Maybe some other way to figure out what block we are in..
+			int32_t image_start_block_offset = 0;
+			for (uint32_t ix = 0; ix < static_cast<int32_t>(m_source_image_mips.get_number_of_levels()); ix++)
 			{
-				// Process 64 blocks at a time, for efficient SIMD processing.
-				// Ideally, N >= 8 (or more) and (N % 8) == 0.
-				const int N = 64;
+				printf("Encoding mip: %i\n", ix);
+				// FIXME: Avoid copy?
+				image_u8& mip_image = *m_source_image_mips.get_level(ix);
 
-				for (uint32_t bx = 0; bx < m_blocks_x; bx += N)
+				// FIXME: Do we really need to calculate these for every image?
+				uint32_t blocks_x = std::max(1u, mip_image.width() / 4);
+				uint32_t blocks_y = std::max(1u, mip_image.height() / 4);
+
+				bool clamp_block = (mip_image.width() < 4) || (mip_image.height() < 4);
+				
+#pragma omp parallel for
+				for (int32_t by = 0; by < static_cast<int32_t>(blocks_y); by++)
 				{
-					const uint32_t num_blocks_to_process = std::min<uint32_t>(m_blocks_x - bx, N);
+					// Process 64 blocks at a time, for efficient SIMD processing.
+					// Ideally, N >= 8 (or more) and (N % 8) == 0.
+					const int N = 64;
 
-					color_quad_u8 pixels[16 * N];
+					for (uint32_t bx = 0; bx < blocks_x; bx += N)
+					{
+						const uint32_t num_blocks_to_process = std::min<uint32_t>(blocks_x - bx, N);
 
-					// Extract num_blocks_to_process 4x4 pixel blocks from the source image and put them into the pixels[] array.
-					for (uint32_t b = 0; b < num_blocks_to_process; b++)
-						m_source_image.get_block(bx + b, by, 4, 4, pixels + b * 16);
+						color_quad_u8 pixels[16 * N];
 
-					// Compress the blocks to BC7.
-					// Note: If you've used Intel's ispc_texcomp, the input pixels are different. BC7E requires a pointer to an array of 16 pixels for each block.
-					block16* pBlock = &m_packed_image16[bx + by * m_blocks_x];
-					ispc::bc7e_compress_blocks(num_blocks_to_process, reinterpret_cast<uint64_t*>(pBlock), reinterpret_cast<const uint32_t*>(pixels), &m_bc7e_pack_params);
+						// Extract num_blocks_to_process 4x4 pixel blocks from the source image and put them into the pixels[] array.
+						if (clamp_block)
+							for (uint32_t b = 0; b < num_blocks_to_process; b++)
+								mip_image.get_block_clamped(bx + b, by, 4, 4, pixels + b * 16);
+						else
+							for (uint32_t b = 0; b < num_blocks_to_process; b++)
+								mip_image.get_block(bx + b, by, 4, 4, pixels + b * 16);
+
+						// Compress the blocks to BC7.
+						// Note: If you've used Intel's ispc_texcomp, the input pixels are different. BC7E requires a pointer to an array of 16 pixels for each block.
+						block16* pBlock = &m_packed_image16[image_start_block_offset + (bx + by * blocks_x)];
+						ispc::bc7e_compress_blocks(num_blocks_to_process, reinterpret_cast<uint64_t*>(pBlock), reinterpret_cast<const uint32_t*>(pixels), &m_bc7e_pack_params);
+					}
+
+					if (m_params.m_status_output)
+					{
+						if ((by & 63) == 0)
+							printf(".");
+					}
 				}
 
-				if (m_params.m_status_output)
-				{
-					if ((by & 63) == 0)
-						printf(".");
-				}
+				image_start_block_offset += blocks_x * blocks_y;
 			}
 
-			for (int by = 0; by < (int)m_blocks_y; by++)
+			for (int by = 0; by < (int)m_total_blocks_y; by++)
 			{
-				for (uint32_t bx = 0; bx < m_blocks_x; bx++)
+				for (uint32_t bx = 0; bx < m_total_blocks_x; bx++)
 				{
-					block16* pBlock = &m_packed_image16[bx + by * m_blocks_x];
+					block16* pBlock = &m_packed_image16[bx + by * m_total_blocks_x];
 
 					uint32_t mode = ((uint8_t*)pBlock)[0];
 					for (uint32_t m = 0; m <= 7; m++)
@@ -556,88 +609,107 @@ namespace rdo_bc
 		else
 #endif
 		{
-#pragma omp parallel for
-			for (int by = 0; by < (int)m_blocks_y; by++)
+			int32_t image_start_block_offset = 0;
+			for (uint32_t ix = 0; ix < static_cast<int32_t>(m_source_image_mips.get_number_of_levels()); ix++)
 			{
-				for (uint32_t bx = 0; bx < m_blocks_x; bx++)
+				printf("Encoding mip: %i\n", ix);
+				// FIXME: Avoid copy?
+				image_u8& mip_image = *m_source_image_mips.get_level(ix);
+
+				// FIXME: Do we really need to calculate these for every image?
+				uint32_t blocks_x = std::max(1u, mip_image.width() / 4);
+				uint32_t blocks_y = std::max(1u, mip_image.height() / 4);
+
+				bool clamp_block = (mip_image.width() < 4) || (mip_image.height() < 4);
+
+#pragma omp parallel for
+				for (int by = 0; by < (int)blocks_y; by++)
 				{
-					color_quad_u8 pixels[16];
-
-					m_source_image.get_block(bx, by, 4, 4, pixels);
-
-					switch (m_params.m_dxgi_format)
+					for (uint32_t bx = 0; bx < blocks_x; bx++)
 					{
-					case DXGI_FORMAT_BC1_UNORM:
-					{
-						block8* pBlock = &m_packed_image8[bx + by * m_blocks_x];
+						color_quad_u8 pixels[16];
 
-						rgbcx::encode_bc1(m_params.m_bc1_quality_level, pBlock, &pixels[0].m_c[0], m_params.m_use_bc1_3color_mode, m_params.m_use_bc1_3color_mode_for_black);
-						break;
-					}
-					case DXGI_FORMAT_BC3_UNORM:
-					{
-						block16* pBlock = &m_packed_image16[bx + by * m_blocks_x];
-
-						if (m_params.m_use_hq_bc345)
-							rgbcx::encode_bc3_hq(m_params.m_bc1_quality_level, pBlock, &pixels[0].m_c[0], m_params.m_bc345_search_rad, m_params.m_bc345_mode_mask);
+						if (clamp_block)
+							mip_image.get_block_clamped(bx, by, 4, 4, pixels);
 						else
-							rgbcx::encode_bc3(m_params.m_bc1_quality_level, pBlock, &pixels[0].m_c[0]);
-						break;
-					}
-					case DXGI_FORMAT_BC4_UNORM:
-					{
-						block8* pBlock = &m_packed_image8[bx + by * m_blocks_x];
+							mip_image.get_block(bx, by, 4, 4, pixels);
 
-						if (m_params.m_use_hq_bc345)
-							rgbcx::encode_bc4_hq(pBlock, &pixels[0].m_c[m_params.m_bc45_channel0], 4, m_params.m_bc345_search_rad, m_params.m_bc345_mode_mask);
-						else
-							rgbcx::encode_bc4(pBlock, &pixels[0].m_c[m_params.m_bc45_channel0], 4);
-						break;
-					}
-					case DXGI_FORMAT_BC5_UNORM:
-					{
-						block16* pBlock = &m_packed_image16[bx + by * m_blocks_x];
+						switch (m_params.m_dxgi_format)
+						{
+						case DXGI_FORMAT_BC1_UNORM:
+						{
+							block8* pBlock = &m_packed_image8[image_start_block_offset + (bx + by * blocks_x)];
 
-						if (m_params.m_use_hq_bc345)
-							rgbcx::encode_bc5_hq(pBlock, &pixels[0].m_c[0], m_params.m_bc45_channel0, m_params.m_bc45_channel1, 4, m_params.m_bc345_search_rad, m_params.m_bc345_mode_mask);
-						else
-							rgbcx::encode_bc5(pBlock, &pixels[0].m_c[0], m_params.m_bc45_channel0, m_params.m_bc45_channel1, 4);
-						break;
-					}
-					case DXGI_FORMAT_BC7_UNORM:
-					{
-						block16* pBlock = &m_packed_image16[bx + by * m_blocks_x];
+							rgbcx::encode_bc1(m_params.m_bc1_quality_level, pBlock, &pixels[0].m_c[0], m_params.m_use_bc1_3color_mode, m_params.m_use_bc1_3color_mode_for_black);
+							break;
+						}
+						case DXGI_FORMAT_BC3_UNORM:
+						{
+							block16* pBlock = &m_packed_image16[image_start_block_offset + (bx + by * blocks_x)];
 
-						bc7enc_compress_block(pBlock, pixels, &m_bc7enc_pack_params);
+							if (m_params.m_use_hq_bc345)
+								rgbcx::encode_bc3_hq(m_params.m_bc1_quality_level, pBlock, &pixels[0].m_c[0], m_params.m_bc345_search_rad, m_params.m_bc345_mode_mask);
+							else
+								rgbcx::encode_bc3(m_params.m_bc1_quality_level, pBlock, &pixels[0].m_c[0]);
+							break;
+						}
+						case DXGI_FORMAT_BC4_UNORM:
+						{
+							block8* pBlock = &m_packed_image8[image_start_block_offset + (bx + by * blocks_x)];
+
+							if (m_params.m_use_hq_bc345)
+								rgbcx::encode_bc4_hq(pBlock, &pixels[0].m_c[m_params.m_bc45_channel0], 4, m_params.m_bc345_search_rad, m_params.m_bc345_mode_mask);
+							else
+								rgbcx::encode_bc4(pBlock, &pixels[0].m_c[m_params.m_bc45_channel0], 4);
+							break;
+						}
+						case DXGI_FORMAT_BC5_UNORM:
+						{
+							block16* pBlock = &m_packed_image16[image_start_block_offset + (bx + by * blocks_x)];
+
+							if (m_params.m_use_hq_bc345)
+								rgbcx::encode_bc5_hq(pBlock, &pixels[0].m_c[0], m_params.m_bc45_channel0, m_params.m_bc45_channel1, 4, m_params.m_bc345_search_rad, m_params.m_bc345_mode_mask);
+							else
+								rgbcx::encode_bc5(pBlock, &pixels[0].m_c[0], m_params.m_bc45_channel0, m_params.m_bc45_channel1, 4);
+							break;
+						}
+						case DXGI_FORMAT_BC7_UNORM:
+						{
+							block16* pBlock = &m_packed_image16[image_start_block_offset + (bx + by * blocks_x)];
+
+							bc7enc_compress_block(pBlock, pixels, &m_bc7enc_pack_params);
 
 #pragma omp critical
-						{
-							uint32_t mode = ((uint8_t*)pBlock)[0];
-							for (uint32_t m = 0; m <= 7; m++)
 							{
-								if (mode & (1 << m))
+								uint32_t mode = ((uint8_t*)pBlock)[0];
+								for (uint32_t m = 0; m <= 7; m++)
 								{
-									bc7_mode_hist[m]++;
-									break;
+									if (mode & (1 << m))
+									{
+										bc7_mode_hist[m]++;
+										break;
+									}
 								}
 							}
+
+							break;
 						}
-
-						break;
+						default:
+						{
+							assert(0);
+							break;
+						}
+						}
 					}
-					default:
+
+					if (m_params.m_status_output)
 					{
-						assert(0);
-						break;
-					}
+						if ((by & 127) == 0)
+							printf(".");
 					}
 				}
 
-				if (m_params.m_status_output)
-				{
-					if ((by & 127) == 0)
-						printf(".");
-				}
+				image_start_block_offset += blocks_x * blocks_y;
 			}
 		}
 
