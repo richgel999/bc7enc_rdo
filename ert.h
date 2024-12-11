@@ -9,6 +9,7 @@
 #include <time.h>
 #include <vector>
 #include <string>
+#include <cstdint>
 
 namespace ert
 {
