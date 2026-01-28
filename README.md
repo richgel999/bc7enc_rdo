@@ -1,6 +1,6 @@
 bc7enc - Fast BC1-7 GPU texture encoders with Rate Distortion Optimization (RDO)
 
-*Note: An even faster alternative to bc7e.ispc is now available - see [bc7f](https://richg42.blogspot.com/2026/01/bc7f-new-real-time-analytical-bc7.html) (or [here](https://github.com/BinomialLLC/basis_universal/wiki/Transcoder-Internals-%E2%80%90-Analytical-Real%E2%80%90Time-Encoders)).*
+*Note: An even faster alternative to bc7e.ispc is now available - see [bc7f](https://richg42.blogspot.com/2026/01/bc7f-new-real-time-analytical-bc7.html) (or [here](https://github.com/BinomialLLC/basis_universal/wiki/Transcoder-Internals-%E2%80%90-Analytical-Real%E2%80%90Time-Encoders)). We've integrated bc7f into this repo for testing, and when we get the time we'll release the integration here.*
 
 This repo contains fast texture encoders for BC1-7. All formats support a simple post-processing transform on the encoded texture data designed to trade off quality for smaller compressed file sizes using LZ compression. Significant (10-50%) size reductions are possible. The BC7 encoder also supports a "reduced entropy" mode using the -e option which causes the output to be biased/weighted in various ways which minimally impact quality, which results in 5-10% smaller file sizes with no slowdowns in encoding time.
 
