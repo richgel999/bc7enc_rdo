@@ -7,6 +7,9 @@
 #include <limits.h>
 #include <algorithm>
 
+// Helper macro to reference the number of elements in a static array.
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
+
 // Helpers
 static inline int32_t clampi(int32_t value, int32_t low, int32_t high) { if (value < low) value = low; else if (value > high) value = high;	return value; }
 static inline float clampf(float value, float low, float high) { if (value < low) value = low; else if (value > high) value = high;	return value; }
@@ -532,6 +535,22 @@ static inline uint64_t compute_color_distance_rgba(const color_rgba *pE1, const 
 {
 	int da = (int)pE1->m_c[3] - (int)pE2->m_c[3];
 	return compute_color_distance_rgb(pE1, pE2, perceptual, weights) + (weights[3] * (uint32_t)(da * da));
+}
+
+static inline uint32_t find_approximate_selector(int d, const int *pThresholds, int num_thresholds) {
+	// Given a value `d` and a list of threshold values sorted in ascending order,
+	// return the index of the largest threshold which constrains `d` (`d < threshold`).
+	// If `d` is larger than any threshold, `num_thresholds` will be returned.
+	// If `d` is smaller than any threshold, `0` will be returned.
+
+	uint32_t s = 0;
+	for (int i = 0; i < num_thresholds; i++) {
+		// Since the thresholds are sorted in ascending order, we'll stop incrementing
+		// once we find a threshold such that `d < pThresholds[i]`.
+		s += (uint32_t)(d >= pThresholds[i]);
+	}
+
+	return s;
 }
 
 static uint64_t pack_mode1_to_one_color(const color_cell_compressor_params *pParams, color_cell_compressor_results *pResults, uint32_t r, uint32_t g, uint32_t b, uint8_t *pSelectors)
@@ -1505,21 +1524,7 @@ static uint64_t color_cell_compression_est_mode1(uint32_t num_pixels, const colo
 			int d = ar * pC->m_c[0] + ag * pC->m_c[1] + ab * pC->m_c[2];
 
 			// Find approximate selector
-			uint32_t s = 0;
-			if (d >= thresh[6])
-				s = 7;
-			else if (d >= thresh[5])
-				s = 6;
-			else if (d >= thresh[4])
-				s = 5;
-			else if (d >= thresh[3])
-				s = 4;
-			else if (d >= thresh[2])
-				s = 3;
-			else if (d >= thresh[1])
-				s = 2;
-			else if (d >= thresh[0])
-				s = 1;
+			uint32_t s = find_approximate_selector(d, thresh, ARRAY_SIZE(thresh));
 
 			// Compute error
 			const int l2 = pC->m_c[0] * 109 + pC->m_c[1] * 366 + pC->m_c[2] * 37;
@@ -1546,21 +1551,7 @@ static uint64_t color_cell_compression_est_mode1(uint32_t num_pixels, const colo
 			int d = ar * pC->m_c[0] + ag * pC->m_c[1] + ab * pC->m_c[2];
 
 			// Find approximate selector
-			uint32_t s = 0;
-			if (d >= thresh[6])
-				s = 7;
-			else if (d >= thresh[5])
-				s = 6;
-			else if (d >= thresh[4])
-				s = 5;
-			else if (d >= thresh[3])
-				s = 4;
-			else if (d >= thresh[2])
-				s = 3;
-			else if (d >= thresh[1])
-				s = 2;
-			else if (d >= thresh[0])
-				s = 1;
+			uint32_t s = find_approximate_selector(d, thresh, ARRAY_SIZE(thresh));
 
 			// Compute error
 			const color_rgba *pE1 = &weightedColors[s];
@@ -1648,13 +1639,7 @@ static uint64_t color_cell_compression_est_mode7(uint32_t num_pixels, const colo
 			int d = ar * pC->m_c[0] + ag * pC->m_c[1] + ab * pC->m_c[2] + aa * pC->m_c[3];
 
 			// Find approximate selector
-			uint32_t s = 0;
-			if (d >= thresh[2])
-				s = 3;
-			else if (d >= thresh[1])
-				s = 2;
-			else if (d >= thresh[0])
-				s = 1;
+			uint32_t s = find_approximate_selector(d, thresh, ARRAY_SIZE(thresh));
 
 			// Compute error
 			const int l2 = pC->m_c[0] * 109 + pC->m_c[1] * 366 + pC->m_c[2] * 37;
@@ -1683,13 +1668,7 @@ static uint64_t color_cell_compression_est_mode7(uint32_t num_pixels, const colo
 			int d = ar * pC->m_c[0] + ag * pC->m_c[1] + ab * pC->m_c[2] + aa * pC->m_c[3];
 
 			// Find approximate selector
-			uint32_t s = 0;
-			if (d >= thresh[2])
-				s = 3;
-			else if (d >= thresh[1])
-				s = 2;
-			else if (d >= thresh[0])
-				s = 1;
+			uint32_t s = find_approximate_selector(d, thresh, ARRAY_SIZE(thresh));
 
 			// Compute error
 			const color_rgba* pE1 = &weightedColors[s];
