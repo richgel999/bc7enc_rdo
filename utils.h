@@ -1780,6 +1780,30 @@ inline uint32_t color_distance(bool perceptual, const color_quad_u8& e1, const c
 		return e1.squared_distance(e2, alpha);
 }
 
+inline color_quad_u8 sRGB_to_linear(color_quad_u8 sRGB)
+{
+	vec3F fvec(sRGB.r / 255.f, sRGB.g / 255.f, sRGB.b / 255.f);
+	for (int i = 0; i < vec3F::num_elements; i++)
+		if (fvec[i] < 0.04045f)
+			fvec[i] = fvec[i] / 12.92f;
+		else
+			fvec[i] = powf((fvec[i] + 0.055f) / 1.055f, 2.4f);
+	color_quad_u8 linear((uint8_t)(fvec[0] * 255), (uint8_t)(fvec[1] * 255), (uint8_t)(fvec[2] * 255), sRGB[3]);
+	return linear;
+}
+
+inline color_quad_u8 linear_to_sRGB(color_quad_u8 linear)
+{
+	vec3F fvec(linear.r / 255.f, linear.g / 255.f, linear.b / 255.f);
+	for (int i = 0; i < vec3F::num_elements; i++)
+		if (fvec[i] < 0.0031308f)
+			fvec[i] = fvec[i] * 12.92f;
+		else
+			fvec[i] = 1.055f * powf(fvec[i], 1.0f / 2.4f) - 0.055f;
+	color_quad_u8 sRGB((uint8_t)(fvec[0] * 255), (uint8_t)(fvec[1] * 255), (uint8_t)(fvec[2] * 255), linear[3]);
+	return sRGB;
+}
+
 extern color_quad_u8 g_white_color_u8, g_black_color_u8, g_red_color_u8, g_green_color_u8, g_blue_color_u8, g_yellow_color_u8, g_purple_color_u8, g_magenta_color_u8, g_cyan_color_u8;
 
 class image_u8
@@ -2039,6 +2063,147 @@ private:
 		color.a = static_cast<uint8_t>(255 - a);
 		set_pixel_clipped_alphablend(x, y, color);
 	}
+};
+
+typedef enum mipmap_generation_method : uint32_t {
+	mipmap_generation_method_LinearBox,
+	mipmap_generation_method_sRGBBox,
+	mipmap_generation_method_NormalMap,
+} mipmap_generation_method;
+
+inline const char* get_mipmap_generation_method_name(mipmap_generation_method method)
+{
+	switch (method)
+	{
+	case utils::mipmap_generation_method_LinearBox:
+		return "linear";
+	case utils::mipmap_generation_method_sRGBBox:
+		return "sRGB";
+	case utils::mipmap_generation_method_NormalMap:
+		return "normal map";
+	default:
+		return "unknown";
+	}
+}
+
+class image_u8_mip
+{
+public:
+	image_u8_mip()
+	{
+		m_levels.resize(0);
+	}
+
+	image_u8_mip(const image_u8& base_image)
+	{
+		m_levels.resize(1);
+		m_levels[0] = base_image;
+	}
+
+	inline void init(const image_u8& base_image)
+	{
+		m_levels.resize(1);
+		m_levels[0] = base_image;
+	}
+
+	inline uint32_t get_number_of_levels() const { return m_levels.size(); }
+
+	// FIXME: Avoid a copy here?
+	inline image_u8* get_level(uint32_t level)
+	{
+		assert(level >= 0 && level < m_levels.size());
+		return &m_levels[level];
+	}
+
+	// FIXME: Care about the clip rect?
+	inline void generate_mipmaps(mipmap_generation_method method)
+	{
+		int levels = 1 + ilogb(std::max(m_levels[0].width(), m_levels[0].height()));
+		m_levels.resize(levels);
+
+		for (int i = 1; i < m_levels.size(); i++)
+		{
+			int prev_level = i - 1;
+			// FIXME: Don't make a copy of the entire image...?
+			image_u8& prev = m_levels[prev_level];
+
+			image_u8 next(std::max(1u, prev.width() / 2), std::max(1u, prev.height() / 2));
+
+			for (size_t y = 0; y < next.height(); y++)
+			{
+				for (size_t x = 0; x < next.width(); x++)
+				{
+					color_quad_u8 value0 = prev(x * 2 + 0, y * 2 + 0);
+					color_quad_u8 value1 = prev(x * 2 + 1, y * 2 + 0);
+					color_quad_u8 value2 = prev(x * 2 + 0, y * 2 + 1);
+					color_quad_u8 value3 = prev(x * 2 + 1, y * 2 + 1);
+
+					// FIXME: Maybe factor out these functions to make this more readable.
+					vec<4, uint32_t> fvalue{};
+					switch (method)
+					{
+					case mipmap_generation_method_LinearBox:
+					// FIXME: Make this it's own thing
+						fvalue.set_x((uint32_t)value0.r + (uint32_t)value1.r + (uint32_t)value2.r + (uint32_t)value3.r);
+						fvalue.set_y((uint32_t)value0.g + (uint32_t)value1.g + (uint32_t)value2.g + (uint32_t)value3.g);
+						fvalue.set_z((uint32_t)value0.b + (uint32_t)value1.b + (uint32_t)value2.b + (uint32_t)value3.b);
+						fvalue = fvalue / 4.0f;
+						break;
+					case mipmap_generation_method_sRGBBox:
+						value0 = sRGB_to_linear(value0);
+						value1 = sRGB_to_linear(value1);
+						value2 = sRGB_to_linear(value2);
+						value3 = sRGB_to_linear(value3);
+						fvalue.set_x((uint32_t)value0.r + (uint32_t)value1.r + (uint32_t)value2.r + (uint32_t)value3.r);
+						fvalue.set_y((uint32_t)value0.g + (uint32_t)value1.g + (uint32_t)value2.g + (uint32_t)value3.g);
+						fvalue.set_z((uint32_t)value0.b + (uint32_t)value1.b + (uint32_t)value2.b + (uint32_t)value3.b);
+						fvalue = fvalue / 4.0f;
+						break;
+					case mipmap_generation_method_NormalMap:
+						// FIXME: Figure out if this is something we want...
+
+						vec<3, float> normal0(value0.r / 255.0f, value0.g / 255.0f, value0.b / 255.0f);
+						vec<3, float> normal1(value1.r / 255.0f, value1.g / 255.0f, value1.b / 255.0f);
+						vec<3, float> normal2(value2.r / 255.0f, value2.g / 255.0f, value2.b / 255.0f);
+						vec<3, float> normal3(value3.r / 255.0f, value3.g / 255.0f, value3.b / 255.0f);
+
+						// Only unpack if there is normal data in the sample
+						if (normal0 != vec3F(0)) normal0 = (normal0 * 2.0f) - vec3F(1.0f);
+						if (normal1 != vec3F(0)) normal1 = (normal1 * 2.0f) - vec3F(1.0f);
+						if (normal2 != vec3F(0)) normal2 = (normal2 * 2.0f) - vec3F(1.0f);
+						if (normal3 != vec3F(0)) normal3 = (normal3 * 2.0f) - vec3F(1.0f);
+
+						// FIXME: Divide with how many samples where != 0.
+						vec<3, float> normal = (normal0 + normal1 + normal2 + normal3) / 4.0f;
+						if (normal != vec3F(0))
+						{
+							normal.normalize3_in_place();
+							normal = (normal * 0.5f) + vec3F(0.5f);
+						}
+						
+						fvalue.set_x((uint32_t)(normal.get_x() * 255));
+						fvalue.set_y((uint32_t)(normal.get_y() * 255));
+						fvalue.set_z((uint32_t)(normal.get_z() * 255));
+						break;
+					}
+
+					// FIXME: Setting for choosing something like perserve coverage...
+					fvalue.set_w(((uint32_t)value0.a + (uint32_t)value1.a + (uint32_t)value2.a + (uint32_t)value3.a) / 4);
+
+					color_quad_u8 value((uint8_t)fvalue.get_x(), (uint8_t)fvalue.get_y(), (uint8_t)fvalue.get_z(), (uint8_t)fvalue.get_w());
+
+					if (method == mipmap_generation_method_sRGBBox)
+						value = linear_to_sRGB(value);
+
+					next(x, y) = value;
+				}
+			}
+
+			m_levels[i] = next;
+		}
+	}
+private:
+	std::vector<image_u8> m_levels;
 };
 
 bool load_png(const char* pFilename, image_u8& img);
@@ -2373,7 +2538,7 @@ struct block16
 
 typedef std::vector<block16> block16_vec;
 
-bool save_dds(const char* pFilename, uint32_t width, uint32_t height, const void* pBlocks, uint32_t pixel_format_bpp, DXGI_FORMAT dxgi_format, bool srgb, bool force_dx10_header);
+bool save_dds(const char* pFilename, uint32_t width, uint32_t height, uint32_t mip_levels, const void* pBlocks, uint32_t pixel_format_bpp, DXGI_FORMAT dxgi_format, bool srgb, bool force_dx10_header);
 
 void strip_extension(std::string& s);
 void strip_path(std::string& s);
