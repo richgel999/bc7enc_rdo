@@ -6,6 +6,109 @@
 #include <assert.h>
 #include <limits.h>
 #include <algorithm>
+#include <chrono>
+
+// Optional x86 fast path. The public bc7enc.h API is unchanged: callers of
+// bc7enc.cpp (the CLI -C encoder and embedders without ISPC) keep scalar output
+// unless AVX-512F/DQ/BW/VL and OS ZMM state are both available. This does not
+// accelerate bc7e.ispc.
+// GCC targeting Windows does not keep spilled 64-byte vectors aligned on the
+// stack (GCC bug 54412), so that toolchain stays on the scalar path.
+#if (defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)) && \
+	!(defined(_WIN32) && defined(__GNUC__) && !defined(__clang__))
+#define BC7ENC_X86 1
+#endif
+
+#ifdef BC7ENC_X86
+#include <immintrin.h>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#else
+#include <cpuid.h>
+#endif
+#if defined(__GNUC__) || defined(__clang__)
+#define BC7ENC_AVX512_FN __attribute__((target("avx512f,avx512dq,avx512bw,avx512vl")))
+#else
+#define BC7ENC_AVX512_FN
+#endif
+
+// -1: automatic, 0: scalar, 1: AVX-512 when the CPU and OS allow it.
+// Regression tests flip this; it is intentionally not a public API.
+static int g_bc7enc_avx512_override = -1;
+
+static int bc7enc_hw_avx512_raw(void)
+{
+	static int s_state = -1;
+	if (s_state >= 0)
+		return s_state;
+
+	int has = 0;
+#if defined(_MSC_VER)
+	int basic[4] = { 0, 0, 0, 0 };
+	__cpuid(basic, 0);
+	if ((unsigned int)basic[0] >= 7)
+	{
+		int leaf1[4] = { 0, 0, 0, 0 };
+		__cpuid(leaf1, 1);
+		const int ecx1 = leaf1[2];
+		if (((ecx1 >> 27) & 1) && ((ecx1 >> 28) & 1))
+		{
+			const unsigned long long xcr0 = _xgetbv(0);
+			const unsigned long long need = (1ull << 1) | (1ull << 2) | (1ull << 5) | (1ull << 6);
+			if ((xcr0 & need) == need)
+			{
+				int leaf7[4] = { 0, 0, 0, 0 };
+				__cpuidex(leaf7, 7, 0);
+				const unsigned int ebx = (unsigned int)leaf7[1];
+				const int avx512f = (ebx >> 16) & 1;
+				const int avx512dq = (ebx >> 17) & 1;
+				const int avx512bw = (ebx >> 30) & 1;
+				const int avx512vl = (ebx >> 31) & 1;
+				has = (avx512f && avx512dq && avx512bw && avx512vl) ? 1 : 0;
+			}
+		}
+	}
+#else
+	unsigned int eax = 0, ebx = 0, ecx = 0, edx = 0;
+	if (__get_cpuid(0, &eax, &ebx, &ecx, &edx) && eax >= 7 &&
+		__get_cpuid(1, &eax, &ebx, &ecx, &edx) && ((ecx >> 27) & 1) && ((ecx >> 28) & 1))
+	{
+		unsigned int xcr_lo = 0, xcr_hi = 0;
+		__asm__ volatile("xgetbv" : "=a"(xcr_lo), "=d"(xcr_hi) : "c"(0));
+		const unsigned long long xcr0 = ((unsigned long long)xcr_hi << 32) | xcr_lo;
+		const unsigned long long need = (1ull << 1) | (1ull << 2) | (1ull << 5) | (1ull << 6);
+		if ((xcr0 & need) == need && __get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx))
+		{
+			const int avx512f = (ebx >> 16) & 1;
+			const int avx512dq = (ebx >> 17) & 1;
+			const int avx512bw = (ebx >> 30) & 1;
+			const int avx512vl = (ebx >> 31) & 1;
+			has = (avx512f && avx512dq && avx512bw && avx512vl) ? 1 : 0;
+		}
+	}
+#endif
+	s_state = has;
+	return has;
+}
+
+static int bc7enc_use_avx512_kernels(void)
+{
+	if (g_bc7enc_avx512_override == 0)
+		return 0;
+	if (!bc7enc_hw_avx512_raw())
+		return 0;
+	if (g_bc7enc_avx512_override == 1)
+		return 1;
+
+	static int s_env_disabled = -1;
+	if (s_env_disabled < 0)
+	{
+		const char* disabled = getenv("BC7ENC_DISABLE_AVX512");
+		s_env_disabled = (disabled && disabled[0] == '1' && disabled[1] == '\0') ? 1 : 0;
+	}
+	return !s_env_disabled;
+}
+#endif
 
 // Helpers
 static inline int32_t clampi(int32_t value, int32_t low, int32_t high) { if (value < low) value = low; else if (value > high) value = high;	return value; }
@@ -642,6 +745,147 @@ static uint64_t pack_mode7_to_one_color(const color_cell_compressor_params* pPar
 	return total_err;
 }
 
+#ifdef BC7ENC_X86
+// Match the scalar cast `(int)((float)proj * f + 0.5f)`. When FMA is enabled for
+// this TU, Clang and GCC fuse it by default in C++; MSVC and builds without FMA keep
+// the separate multiply and add. An explicit -ffp-contract override is not detected.
+BC7ENC_AVX512_FN
+static inline __m512 bc7enc_scale_projection(__m512i proj, float f)
+{
+#if defined(__FMA__) && (defined(__clang__) || defined(__GNUC__))
+	return _mm512_fmadd_ps(_mm512_cvtepi32_ps(proj), _mm512_set1_ps(f), _mm512_set1_ps(0.5f));
+#else
+	return _mm512_add_ps(_mm512_mul_ps(_mm512_cvtepi32_ps(proj), _mm512_set1_ps(f)), _mm512_set1_ps(0.5f));
+#endif
+}
+
+BC7ENC_AVX512_FN
+static inline __m512i bc7enc_rgb_lane_err(const __m512i sel, const __m512i tr, const __m512i tg, const __m512i tb,
+	const __m512i r, const __m512i g, const __m512i b, const __m512i w0, const __m512i w1, const __m512i w2)
+{
+	const __m512i er = _mm512_sub_epi32(_mm512_permutexvar_epi32(sel, tr), r);
+	const __m512i eg = _mm512_sub_epi32(_mm512_permutexvar_epi32(sel, tg), g);
+	const __m512i eb = _mm512_sub_epi32(_mm512_permutexvar_epi32(sel, tb), b);
+	__m512i err = _mm512_mullo_epi32(w0, _mm512_mullo_epi32(er, er));
+	err = _mm512_add_epi32(err, _mm512_mullo_epi32(w1, _mm512_mullo_epi32(eg, eg)));
+	return _mm512_add_epi32(err, _mm512_mullo_epi32(w2, _mm512_mullo_epi32(eb, eb)));
+}
+
+BC7ENC_AVX512_FN
+static inline __m512i bc7enc_rgba_lane_err(const __m512i sel, const __m512i tr, const __m512i tg, const __m512i tb, const __m512i ta,
+	const __m512i r, const __m512i g, const __m512i b, const __m512i a, const __m512i w0, const __m512i w1, const __m512i w2, const __m512i w3)
+{
+	const __m512i er = _mm512_sub_epi32(_mm512_permutexvar_epi32(sel, tr), r);
+	const __m512i eg = _mm512_sub_epi32(_mm512_permutexvar_epi32(sel, tg), g);
+	const __m512i eb = _mm512_sub_epi32(_mm512_permutexvar_epi32(sel, tb), b);
+	const __m512i ea = _mm512_sub_epi32(_mm512_permutexvar_epi32(sel, ta), a);
+	__m512i err = _mm512_mullo_epi32(w0, _mm512_mullo_epi32(er, er));
+	err = _mm512_add_epi32(err, _mm512_mullo_epi32(w1, _mm512_mullo_epi32(eg, eg)));
+	err = _mm512_add_epi32(err, _mm512_mullo_epi32(w2, _mm512_mullo_epi32(eb, eb)));
+	return _mm512_add_epi32(err, _mm512_mullo_epi32(w3, _mm512_mullo_epi32(ea, ea)));
+}
+
+BC7ENC_AVX512_FN
+static uint64_t bc7enc_reduce_u32(__m512i err, __mmask16 lanes)
+{
+	err = _mm512_maskz_mov_epi32(lanes, err);
+	const __m512i lo = _mm512_cvtepu32_epi64(_mm512_castsi512_si256(err));
+	const __m512i hi = _mm512_cvtepu32_epi64(_mm512_extracti64x4_epi64(err, 1));
+	return (uint64_t)_mm512_reduce_add_epi64(_mm512_add_epi64(lo, hi));
+}
+
+BC7ENC_AVX512_FN
+static uint64_t eval_sol_rgb_avx512(uint32_t num_pixels, const color_rgba *pPixels,
+	const color_rgba *weightedColors, int N, int lr, int lg, int lb,
+	int adr, int adg, int adb, float f, const uint32_t weights[4], uint8_t *pSel)
+{
+	const __mmask16 lanes = (num_pixels >= 16) ? (__mmask16)0xFFFF : (__mmask16)((1u << num_pixels) - 1u);
+	const __m512i v = _mm512_maskz_loadu_epi32(lanes, pPixels);
+	const __m512i bytemask = _mm512_set1_epi32(0xFF);
+	const __m512i r = _mm512_and_si512(v, bytemask);
+	const __m512i g = _mm512_and_si512(_mm512_srli_epi32(v, 8), bytemask);
+	const __m512i b = _mm512_and_si512(_mm512_srli_epi32(v, 16), bytemask);
+
+	__m512i proj = _mm512_mullo_epi32(_mm512_sub_epi32(r, _mm512_set1_epi32(lr)), _mm512_set1_epi32(adr));
+	proj = _mm512_add_epi32(proj, _mm512_mullo_epi32(_mm512_sub_epi32(g, _mm512_set1_epi32(lg)), _mm512_set1_epi32(adg)));
+	proj = _mm512_add_epi32(proj, _mm512_mullo_epi32(_mm512_sub_epi32(b, _mm512_set1_epi32(lb)), _mm512_set1_epi32(adb)));
+
+	__m512i sel = _mm512_cvttps_epi32(bc7enc_scale_projection(proj, f));
+	sel = _mm512_max_epi32(sel, _mm512_set1_epi32(1));
+	sel = _mm512_min_epi32(sel, _mm512_set1_epi32(N - 1));
+	const __m512i sel1 = _mm512_sub_epi32(sel, _mm512_set1_epi32(1));
+
+	int32_t twr[16] = { 0 }, twg[16] = { 0 }, twb[16] = { 0 };
+	for (int j = 0; j < N; j++)
+	{
+		twr[j] = weightedColors[j].m_c[0];
+		twg[j] = weightedColors[j].m_c[1];
+		twb[j] = weightedColors[j].m_c[2];
+	}
+	const __m512i tr = _mm512_loadu_si512(twr), tg = _mm512_loadu_si512(twg), tb = _mm512_loadu_si512(twb);
+	const __m512i w0 = _mm512_set1_epi32((int)weights[0]);
+	const __m512i w1 = _mm512_set1_epi32((int)weights[1]);
+	const __m512i w2 = _mm512_set1_epi32((int)weights[2]);
+	const __m512i err1 = bc7enc_rgb_lane_err(sel, tr, tg, tb, r, g, b, w0, w1, w2);
+	const __m512i err0 = bc7enc_rgb_lane_err(sel1, tr, tg, tb, r, g, b, w0, w1, w2);
+
+	// Scalar RGB keeps err1/sel unless err0 < err1.
+	const __mmask16 pick0 = _mm512_cmplt_epu32_mask(err0, err1);
+	const __m512i best = _mm512_mask_blend_epi32(pick0, err1, err0);
+	const __m512i best_sel = _mm512_mask_blend_epi32(pick0, sel, sel1);
+	_mm_mask_storeu_epi8(pSel, lanes, _mm512_cvtepi32_epi8(best_sel));
+	return bc7enc_reduce_u32(best, lanes);
+}
+
+BC7ENC_AVX512_FN
+static uint64_t eval_sol_rgba_avx512(uint32_t num_pixels, const color_rgba *pPixels,
+	const color_rgba *weightedColors, int N, int lr, int lg, int lb, int la,
+	int adr, int adg, int adb, int ada, float f, const uint32_t weights[4], uint8_t *pSel)
+{
+	const __mmask16 lanes = (num_pixels >= 16) ? (__mmask16)0xFFFF : (__mmask16)((1u << num_pixels) - 1u);
+	const __m512i v = _mm512_maskz_loadu_epi32(lanes, pPixels);
+	const __m512i bytemask = _mm512_set1_epi32(0xFF);
+	const __m512i r = _mm512_and_si512(v, bytemask);
+	const __m512i g = _mm512_and_si512(_mm512_srli_epi32(v, 8), bytemask);
+	const __m512i b = _mm512_and_si512(_mm512_srli_epi32(v, 16), bytemask);
+	const __m512i a = _mm512_srli_epi32(v, 24);
+
+	__m512i proj = _mm512_mullo_epi32(_mm512_sub_epi32(r, _mm512_set1_epi32(lr)), _mm512_set1_epi32(adr));
+	proj = _mm512_add_epi32(proj, _mm512_mullo_epi32(_mm512_sub_epi32(g, _mm512_set1_epi32(lg)), _mm512_set1_epi32(adg)));
+	proj = _mm512_add_epi32(proj, _mm512_mullo_epi32(_mm512_sub_epi32(b, _mm512_set1_epi32(lb)), _mm512_set1_epi32(adb)));
+	proj = _mm512_add_epi32(proj, _mm512_mullo_epi32(_mm512_sub_epi32(a, _mm512_set1_epi32(la)), _mm512_set1_epi32(ada)));
+
+	__m512i sel = _mm512_cvttps_epi32(bc7enc_scale_projection(proj, f));
+	sel = _mm512_max_epi32(sel, _mm512_set1_epi32(1));
+	sel = _mm512_min_epi32(sel, _mm512_set1_epi32(N - 1));
+	const __m512i sel1 = _mm512_sub_epi32(sel, _mm512_set1_epi32(1));
+
+	int32_t twr[16] = { 0 }, twg[16] = { 0 }, twb[16] = { 0 }, twa[16] = { 0 };
+	for (int j = 0; j < N; j++)
+	{
+		twr[j] = weightedColors[j].m_c[0];
+		twg[j] = weightedColors[j].m_c[1];
+		twb[j] = weightedColors[j].m_c[2];
+		twa[j] = weightedColors[j].m_c[3];
+	}
+	const __m512i tr = _mm512_loadu_si512(twr), tg = _mm512_loadu_si512(twg);
+	const __m512i tb = _mm512_loadu_si512(twb), ta = _mm512_loadu_si512(twa);
+	const __m512i w0 = _mm512_set1_epi32((int)weights[0]);
+	const __m512i w1 = _mm512_set1_epi32((int)weights[1]);
+	const __m512i w2 = _mm512_set1_epi32((int)weights[2]);
+	const __m512i w3 = _mm512_set1_epi32((int)weights[3]);
+	const __m512i err1 = bc7enc_rgba_lane_err(sel, tr, tg, tb, ta, r, g, b, a, w0, w1, w2, w3);
+	const __m512i err0 = bc7enc_rgba_lane_err(sel1, tr, tg, tb, ta, r, g, b, a, w0, w1, w2, w3);
+
+	// Scalar RGBA replaces the candidate only when err1 > err0, so equal errors keep sel.
+	const __mmask16 pick0 = _mm512_cmpgt_epu32_mask(err1, err0);
+	const __m512i best = _mm512_mask_blend_epi32(pick0, err1, err0);
+	const __m512i best_sel = _mm512_mask_blend_epi32(pick0, sel, sel1);
+	_mm_mask_storeu_epi8(pSel, lanes, _mm512_cvtepi32_epi8(best_sel));
+	return bc7enc_reduce_u32(best, lanes);
+}
+#endif
+
 static uint64_t evaluate_solution(const color_rgba *pLow, const color_rgba *pHigh, const uint32_t pbits[2], const color_cell_compressor_params *pParams, color_cell_compressor_results *pResults,
 	const bc7enc_compress_block_params* pComp_params)
 {
@@ -720,6 +964,12 @@ static uint64_t evaluate_solution(const color_rgba *pLow, const color_rgba *pHig
 
 			const float f = N / (float)(squarei(dr) + squarei(dg) + squarei(db) + squarei(da) + .00000125f);
 
+#ifdef BC7ENC_X86
+			if (bc7enc_use_avx512_kernels() && pParams->m_num_pixels <= 16)
+				total_err = eval_sol_rgba_avx512(pParams->m_num_pixels, pParams->m_pPixels, weightedColors, (int)N,
+					lr, lg, lb, la, dr, dg, db, da, f, pParams->m_weights, pResults->m_pSelectors_temp);
+			else
+#endif
 			for (uint32_t i = 0; i < pParams->m_num_pixels; i++)
 			{
 				const color_rgba *pC = &pParams->m_pPixels[i];
@@ -748,6 +998,12 @@ static uint64_t evaluate_solution(const color_rgba *pLow, const color_rgba *pHig
 		{
 			const float f = N / (float)(squarei(dr) + squarei(dg) + squarei(db) + .00000125f);
 
+#ifdef BC7ENC_X86
+			if (bc7enc_use_avx512_kernels() && pParams->m_num_pixels <= 16)
+				total_err = eval_sol_rgb_avx512(pParams->m_num_pixels, pParams->m_pPixels, weightedColors, (int)N,
+					lr, lg, lb, dr, dg, db, f, pParams->m_weights, pResults->m_pSelectors_temp);
+			else
+#endif
 			for (uint32_t i = 0; i < pParams->m_num_pixels; i++)
 			{
 				const color_rgba *pC = &pParams->m_pPixels[i];
@@ -1440,6 +1696,172 @@ static uint64_t color_cell_compression(uint32_t mode, const color_cell_compresso
 	return pResults->m_best_overall_err;
 }
 
+#ifdef BC7ENC_X86
+// Bit-exact AVX-512 replacement for the per-pixel selector + error loop in
+// color_cell_compression_est_mode1. A subset holds at most 16 pixels, so the
+// loop is one masked 16-wide pass. The scalar early-out only returns after the
+// sum has already passed best_err_so_far; estimate_partition accepts a partition
+// only when the sum is strictly smaller, so the full SIMD reduction ranks the
+// same partitions. The scalar loop remains for CPUs without AVX-512.
+BC7ENC_AVX512_FN
+static uint64_t est_err_mode1_avx512(uint32_t num_pixels, const color_rgba *pPixels,
+	bool perceptual, const uint32_t pweights[4],
+	const color_rgba weightedColors[8], int ar, int ag, int ab, const int thresh[7])
+{
+	const __mmask16 lanes = (num_pixels >= 16) ? (__mmask16)0xFFFF : (__mmask16)((1u << num_pixels) - 1u);
+	const __m512i v = _mm512_maskz_loadu_epi32(lanes, pPixels);
+	const __m512i bytemask = _mm512_set1_epi32(0xFF);
+	const __m512i r = _mm512_and_si512(v, bytemask);
+	const __m512i g = _mm512_and_si512(_mm512_srli_epi32(v, 8), bytemask);
+	const __m512i b = _mm512_and_si512(_mm512_srli_epi32(v, 16), bytemask);
+
+	__m512i d = _mm512_mullo_epi32(r, _mm512_set1_epi32(ar));
+	d = _mm512_add_epi32(d, _mm512_mullo_epi32(g, _mm512_set1_epi32(ag)));
+	d = _mm512_add_epi32(d, _mm512_mullo_epi32(b, _mm512_set1_epi32(ab)));
+
+	__m512i s = _mm512_setzero_si512();
+	for (int k = 0; k < 7; k++)
+	{
+		const __mmask16 m = _mm512_cmpge_epi32_mask(d, _mm512_set1_epi32(thresh[k]));
+		s = _mm512_mask_blend_epi32(m, s, _mm512_set1_epi32(k + 1));
+	}
+
+	int32_t twr[16] = { 0 }, twg[16] = { 0 }, twb[16] = { 0 };
+	int32_t tl[16] = { 0 }, tcr[16] = { 0 }, tcb[16] = { 0 };
+	for (int j = 0; j < 8; j++)
+	{
+		twr[j] = weightedColors[j].m_c[0];
+		twg[j] = weightedColors[j].m_c[1];
+		twb[j] = weightedColors[j].m_c[2];
+		const int l = weightedColors[j].m_c[0] * 109 + weightedColors[j].m_c[1] * 366 + weightedColors[j].m_c[2] * 37;
+		tl[j] = l;
+		tcr[j] = ((int)weightedColors[j].m_c[0] << 9) - l;
+		tcb[j] = ((int)weightedColors[j].m_c[2] << 9) - l;
+	}
+
+	__m512i err;
+	if (perceptual)
+	{
+		const __m512i l1 = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(tl));
+		const __m512i cr1 = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(tcr));
+		const __m512i cb1 = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(tcb));
+		const __m512i l2 = _mm512_add_epi32(_mm512_add_epi32(
+			_mm512_mullo_epi32(r, _mm512_set1_epi32(109)),
+			_mm512_mullo_epi32(g, _mm512_set1_epi32(366))),
+			_mm512_mullo_epi32(b, _mm512_set1_epi32(37)));
+		const __m512i cr2 = _mm512_sub_epi32(_mm512_slli_epi32(r, 9), l2);
+		const __m512i cb2 = _mm512_sub_epi32(_mm512_slli_epi32(b, 9), l2);
+		const __m512i dl = _mm512_srai_epi32(_mm512_sub_epi32(l1, l2), 8);
+		const __m512i dcr = _mm512_srai_epi32(_mm512_sub_epi32(cr1, cr2), 8);
+		const __m512i dcb = _mm512_srai_epi32(_mm512_sub_epi32(cb1, cb2), 8);
+		err = _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[0]), _mm512_mullo_epi32(dl, dl));
+		err = _mm512_add_epi32(err, _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[1]), _mm512_mullo_epi32(dcr, dcr)));
+		err = _mm512_add_epi32(err, _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[2]), _mm512_mullo_epi32(dcb, dcb)));
+		err = _mm512_maskz_mov_epi32(lanes, err);
+		const __m512i lo = _mm512_cvtepi32_epi64(_mm512_castsi512_si256(err));
+		const __m512i hi = _mm512_cvtepi32_epi64(_mm512_extracti64x4_epi64(err, 1));
+		return (uint64_t)_mm512_reduce_add_epi64(_mm512_add_epi64(lo, hi));
+	}
+
+	const __m512i wr = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(twr));
+	const __m512i wg = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(twg));
+	const __m512i wb = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(twb));
+	const __m512i dr = _mm512_sub_epi32(wr, r);
+	const __m512i dg = _mm512_sub_epi32(wg, g);
+	const __m512i db = _mm512_sub_epi32(wb, b);
+	err = _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[0]), _mm512_mullo_epi32(dr, dr));
+	err = _mm512_add_epi32(err, _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[1]), _mm512_mullo_epi32(dg, dg)));
+	err = _mm512_add_epi32(err, _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[2]), _mm512_mullo_epi32(db, db)));
+	err = _mm512_maskz_mov_epi32(lanes, err);
+	const __m512i lo = _mm512_cvtepu32_epi64(_mm512_castsi512_si256(err));
+	const __m512i hi = _mm512_cvtepu32_epi64(_mm512_extracti64x4_epi64(err, 1));
+	return (uint64_t)_mm512_reduce_add_epi64(_mm512_add_epi64(lo, hi));
+}
+
+BC7ENC_AVX512_FN
+static uint64_t est_err_mode7_avx512(uint32_t num_pixels, const color_rgba *pPixels,
+	bool perceptual, const uint32_t pweights[4],
+	const color_rgba weightedColors[4], int ar, int ag, int ab, int aa, const int thresh[3])
+{
+	const __mmask16 lanes = (num_pixels >= 16) ? (__mmask16)0xFFFF : (__mmask16)((1u << num_pixels) - 1u);
+	const __m512i v = _mm512_maskz_loadu_epi32(lanes, pPixels);
+	const __m512i bytemask = _mm512_set1_epi32(0xFF);
+	const __m512i r = _mm512_and_si512(v, bytemask);
+	const __m512i g = _mm512_and_si512(_mm512_srli_epi32(v, 8), bytemask);
+	const __m512i b = _mm512_and_si512(_mm512_srli_epi32(v, 16), bytemask);
+	const __m512i a = _mm512_srli_epi32(v, 24);
+
+	__m512i d = _mm512_mullo_epi32(r, _mm512_set1_epi32(ar));
+	d = _mm512_add_epi32(d, _mm512_mullo_epi32(g, _mm512_set1_epi32(ag)));
+	d = _mm512_add_epi32(d, _mm512_mullo_epi32(b, _mm512_set1_epi32(ab)));
+	d = _mm512_add_epi32(d, _mm512_mullo_epi32(a, _mm512_set1_epi32(aa)));
+
+	__m512i s = _mm512_setzero_si512();
+	for (int k = 0; k < 3; k++)
+	{
+		const __mmask16 m = _mm512_cmpge_epi32_mask(d, _mm512_set1_epi32(thresh[k]));
+		s = _mm512_mask_blend_epi32(m, s, _mm512_set1_epi32(k + 1));
+	}
+
+	int32_t twr[16] = { 0 }, twg[16] = { 0 }, twb[16] = { 0 }, twa[16] = { 0 };
+	int32_t tl[16] = { 0 }, tcr[16] = { 0 }, tcb[16] = { 0 };
+	for (int j = 0; j < 4; j++)
+	{
+		twr[j] = weightedColors[j].m_c[0];
+		twg[j] = weightedColors[j].m_c[1];
+		twb[j] = weightedColors[j].m_c[2];
+		twa[j] = weightedColors[j].m_c[3];
+		const int l = weightedColors[j].m_c[0] * 109 + weightedColors[j].m_c[1] * 366 + weightedColors[j].m_c[2] * 37;
+		tl[j] = l;
+		tcr[j] = ((int)weightedColors[j].m_c[0] << 9) - l;
+		tcb[j] = ((int)weightedColors[j].m_c[2] << 9) - l;
+	}
+
+	const __m512i wa = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(twa));
+	__m512i err;
+	if (perceptual)
+	{
+		const __m512i l1 = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(tl));
+		const __m512i cr1 = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(tcr));
+		const __m512i cb1 = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(tcb));
+		const __m512i l2 = _mm512_add_epi32(_mm512_add_epi32(
+			_mm512_mullo_epi32(r, _mm512_set1_epi32(109)),
+			_mm512_mullo_epi32(g, _mm512_set1_epi32(366))),
+			_mm512_mullo_epi32(b, _mm512_set1_epi32(37)));
+		const __m512i cr2 = _mm512_sub_epi32(_mm512_slli_epi32(r, 9), l2);
+		const __m512i cb2 = _mm512_sub_epi32(_mm512_slli_epi32(b, 9), l2);
+		const __m512i dl = _mm512_srai_epi32(_mm512_sub_epi32(l1, l2), 8);
+		const __m512i dcr = _mm512_srai_epi32(_mm512_sub_epi32(cr1, cr2), 8);
+		const __m512i dcb = _mm512_srai_epi32(_mm512_sub_epi32(cb1, cb2), 8);
+		const __m512i dca = _mm512_sub_epi32(a, wa);
+		err = _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[0]), _mm512_mullo_epi32(dl, dl));
+		err = _mm512_add_epi32(err, _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[1]), _mm512_mullo_epi32(dcr, dcr)));
+		err = _mm512_add_epi32(err, _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[2]), _mm512_mullo_epi32(dcb, dcb)));
+		err = _mm512_add_epi32(err, _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[3]), _mm512_mullo_epi32(dca, dca)));
+		err = _mm512_maskz_mov_epi32(lanes, err);
+		const __m512i lo = _mm512_cvtepi32_epi64(_mm512_castsi512_si256(err));
+		const __m512i hi = _mm512_cvtepi32_epi64(_mm512_extracti64x4_epi64(err, 1));
+		return (uint64_t)_mm512_reduce_add_epi64(_mm512_add_epi64(lo, hi));
+	}
+
+	const __m512i wr = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(twr));
+	const __m512i wg = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(twg));
+	const __m512i wb = _mm512_permutexvar_epi32(s, _mm512_loadu_si512(twb));
+	const __m512i dr = _mm512_sub_epi32(wr, r);
+	const __m512i dg = _mm512_sub_epi32(wg, g);
+	const __m512i db = _mm512_sub_epi32(wb, b);
+	const __m512i da = _mm512_sub_epi32(wa, a);
+	err = _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[0]), _mm512_mullo_epi32(dr, dr));
+	err = _mm512_add_epi32(err, _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[1]), _mm512_mullo_epi32(dg, dg)));
+	err = _mm512_add_epi32(err, _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[2]), _mm512_mullo_epi32(db, db)));
+	err = _mm512_add_epi32(err, _mm512_mullo_epi32(_mm512_set1_epi32((int)pweights[3]), _mm512_mullo_epi32(da, da)));
+	err = _mm512_maskz_mov_epi32(lanes, err);
+	const __m512i lo = _mm512_cvtepu32_epi64(_mm512_castsi512_si256(err));
+	const __m512i hi = _mm512_cvtepu32_epi64(_mm512_extracti64x4_epi64(err, 1));
+	return (uint64_t)_mm512_reduce_add_epi64(_mm512_add_epi64(lo, hi));
+}
+#endif
+
 static uint64_t color_cell_compression_est_mode1(uint32_t num_pixels, const color_rgba *pPixels, bool perceptual, uint32_t pweights[4], uint64_t best_err_so_far)
 {
 	// Find RGB bounds as an approximation of the block's principle axis
@@ -1484,6 +1906,11 @@ static uint64_t color_cell_compression_est_mode1(uint32_t num_pixels, const colo
 	int thresh[8 - 1];
 	for (uint32_t i = 0; i < (N - 1); i++)
 		thresh[i] = (dots[i] + dots[i + 1] + 1) >> 1;
+
+#ifdef BC7ENC_X86
+	if (bc7enc_use_avx512_kernels() && num_pixels <= 16)
+		return est_err_mode1_avx512(num_pixels, pPixels, perceptual, pweights, weightedColors, ar, ag, ab, thresh);
+#endif
 
 	uint64_t total_err = 0;
 	if (perceptual)
@@ -1627,6 +2054,11 @@ static uint64_t color_cell_compression_est_mode7(uint32_t num_pixels, const colo
 	int thresh[4 - 1];
 	for (uint32_t i = 0; i < (N - 1); i++)
 		thresh[i] = (dots[i] + dots[i + 1] + 1) >> 1;
+
+#ifdef BC7ENC_X86
+	if (bc7enc_use_avx512_kernels() && num_pixels <= 16)
+		return est_err_mode7_avx512(num_pixels, pPixels, perceptual, pweights, weightedColors, ar, ag, ab, aa, thresh);
+#endif
 
 	uint64_t total_err = 0;
 	if (perceptual)
@@ -2535,6 +2967,362 @@ struct bc7_block
 		return bc7_mode;
 	}
 };
+
+static void bc7enc_selftest_fill(color_rgba* px, uint32_t seed, int kind)
+{
+	for (uint32_t i = 0; i < 16; i++)
+	{
+		const uint32_t x = seed * 1664525u + 1013904223u + i * 747796405u;
+		memset(&px[i], 0, sizeof(px[i]));
+		if (kind == 0)
+		{
+			px[i].m_c[0] = px[i].m_c[1] = px[i].m_c[2] = (uint8_t)seed;
+			px[i].m_c[3] = 255;
+		}
+		else if (kind == 1)
+		{
+			px[i].m_c[0] = (uint8_t)(i * 17);
+			px[i].m_c[1] = (uint8_t)seed;
+			px[i].m_c[2] = (uint8_t)(255 - i * 13);
+			px[i].m_c[3] = 255;
+		}
+		else if (kind == 2)
+		{
+			px[i].m_c[0] = (uint8_t)x;
+			px[i].m_c[1] = (uint8_t)(x >> 8);
+			px[i].m_c[2] = (uint8_t)(x >> 16);
+			px[i].m_c[3] = 255;
+		}
+		else if (kind == 3)
+		{
+			px[i].m_c[0] = (uint8_t)x;
+			px[i].m_c[1] = (uint8_t)(x >> 8);
+			px[i].m_c[2] = (uint8_t)(x >> 16);
+			px[i].m_c[3] = (uint8_t)(i * 15);
+		}
+		else if (kind == 4)
+		{
+			const int on = ((i & 1) ^ ((i >> 2) & 1));
+			px[i].m_c[0] = (uint8_t)(on ? 255 : 0);
+			px[i].m_c[1] = (uint8_t)(on ? 0 : 255);
+			px[i].m_c[2] = (uint8_t)seed;
+			px[i].m_c[3] = 255;
+		}
+		else
+		{
+			px[i].m_c[0] = (uint8_t)(128 + (i & 1));
+			px[i].m_c[1] = (uint8_t)(64 + ((i >> 1) & 1));
+			px[i].m_c[2] = (uint8_t)(32 + (i & 3));
+			px[i].m_c[3] = (uint8_t)(250 + (i & 1));
+		}
+	}
+}
+
+static int bc7enc_selftest_encode_pair(const color_rgba* px, const bc7enc_compress_block_params* params, const char* label)
+{
+	uint8_t scalar_block[16], avx_block[16];
+#ifdef BC7ENC_X86
+	g_bc7enc_avx512_override = 0;
+#else
+	(void)0;
+#endif
+	bc7enc_compress_block(scalar_block, px, params);
+#ifdef BC7ENC_X86
+	g_bc7enc_avx512_override = 1;
+#endif
+	bc7enc_compress_block(avx_block, px, params);
+#ifdef BC7ENC_X86
+	g_bc7enc_avx512_override = -1;
+#endif
+	if (memcmp(scalar_block, avx_block, 16) != 0)
+	{
+		fprintf(stderr, "AVX-512 self-test mismatch: %s\n", label);
+		return 1;
+	}
+	return 0;
+}
+
+int bc7enc_run_avx512_selftest()
+{
+	bc7enc_compress_block_init();
+#ifdef BC7ENC_X86
+	printf("AVX-512 bc7enc.cpp kernels: %s (automatic dispatch %s)\n",
+		bc7enc_hw_avx512_raw() ? "available" : "unavailable, scalar only",
+		bc7enc_use_avx512_kernels() ? "on" : "off");
+#else
+	printf("AVX-512 bc7enc.cpp kernels: not compiled for this architecture\n");
+#endif
+
+	int failures = 0;
+	color_rgba px[16];
+	const uint32_t partitions[] = { 0, 1, 16, 64 };
+	for (int kind = 0; kind < 6; kind++)
+	{
+		for (uint32_t seed = 1; seed < 8; seed++)
+		{
+			bc7enc_selftest_fill(px, seed * 17u + (uint32_t)kind, kind);
+			for (uint32_t pi = 0; pi < 4; pi++)
+			{
+				for (int perceptual = 0; perceptual < 2; perceptual++)
+				{
+					for (uint32_t uber = 0; uber <= 4; uber += 4)
+					{
+						bc7enc_compress_block_params params;
+						bc7enc_compress_block_params_init(&params);
+						if (perceptual)
+							bc7enc_compress_block_params_init_perceptual_weights(&params);
+						else
+							bc7enc_compress_block_params_init_linear_weights(&params);
+						params.m_max_partitions = partitions[pi];
+						params.m_uber_level = uber;
+						params.m_mode17_partition_estimation_filterbank = (seed & 1) != 0;
+						char label[96];
+						snprintf(label, sizeof(label), "kind=%d seed=%u part=%u perc=%d uber=%u", kind, seed, partitions[pi], perceptual, uber);
+						failures += bc7enc_selftest_encode_pair(px, &params, label);
+					}
+				}
+			}
+		}
+	}
+
+	bc7enc_compress_block_params forced;
+	bc7enc_compress_block_params_init(&forced);
+	bc7enc_compress_block_params_init_linear_weights(&forced);
+	forced.m_mode_mask = UINT32_MAX;
+	forced.m_max_partitions = 64;
+	forced.m_uber_level = 0;
+	forced.m_try_least_squares = true;
+	forced.m_mode17_partition_estimation_filterbank = true;
+	forced.m_force_selectors = true;
+	for (uint32_t i = 0; i < 16; i++)
+		forced.m_selectors[i] = (uint8_t)(i & 3);
+	bc7enc_selftest_fill(px, 99, 3);
+	failures += bc7enc_selftest_encode_pair(px, &forced, "forced-selectors");
+
+#ifdef BC7ENC_X86
+	if (bc7enc_hw_avx512_raw())
+	{
+		const uint32_t linear_w[4] = { 1, 1, 1, 1 };
+		const uint32_t perceptual_w[4] = { 128, 64, 16, 32 };
+		const uint32_t uneven_w[4] = { 3, 5, 7, 11 };
+		for (int mode7 = 0; mode7 < 2; mode7++)
+		{
+			for (int perceptual = 0; perceptual < 2; perceptual++)
+			{
+				for (uint32_t n = 0; n <= 16; n++)
+				{
+					bc7enc_selftest_fill(px, n * 19u + (uint32_t)perceptual * 3u + (uint32_t)mode7, (n & 1) ? 5 : 2);
+					uint32_t w[4];
+					memcpy(w, perceptual ? perceptual_w : ((n & 2) ? uneven_w : linear_w), sizeof(w));
+					g_bc7enc_avx512_override = 0;
+					const uint64_t scalar_full = mode7
+						? color_cell_compression_est_mode7(n, px, perceptual != 0, w, UINT64_MAX)
+						: color_cell_compression_est_mode1(n, px, perceptual != 0, w, UINT64_MAX);
+					g_bc7enc_avx512_override = 1;
+					const uint64_t avx_full = mode7
+						? color_cell_compression_est_mode7(n, px, perceptual != 0, w, UINT64_MAX)
+						: color_cell_compression_est_mode1(n, px, perceptual != 0, w, UINT64_MAX);
+					if (scalar_full != avx_full)
+					{
+						fprintf(stderr, "estimate full-sum mismatch mode=%d perceptual=%d n=%u\n", mode7 ? 7 : 1, perceptual, n);
+						failures++;
+					}
+
+					const uint64_t budgets[3] = { scalar_full / 2, scalar_full, scalar_full == UINT64_MAX ? UINT64_MAX : scalar_full + 1 };
+					for (int bi = 0; bi < 3; bi++)
+					{
+						const uint64_t budget = budgets[bi];
+						g_bc7enc_avx512_override = 0;
+						const uint64_t scalar_part = mode7
+							? color_cell_compression_est_mode7(n, px, perceptual != 0, w, budget)
+							: color_cell_compression_est_mode1(n, px, perceptual != 0, w, budget);
+						g_bc7enc_avx512_override = 1;
+						const uint64_t avx_part = mode7
+							? color_cell_compression_est_mode7(n, px, perceptual != 0, w, budget)
+							: color_cell_compression_est_mode1(n, px, perceptual != 0, w, budget);
+						if (avx_part != avx_full || ((scalar_part < budget) != (avx_part < budget)))
+						{
+							fprintf(stderr, "estimate early-out ranking mismatch mode=%d perceptual=%d n=%u budget=%llu\n",
+								mode7 ? 7 : 1, perceptual, n, (unsigned long long)budget);
+							failures++;
+						}
+					}
+				}
+			}
+		}
+		g_bc7enc_avx512_override = -1;
+	}
+#endif
+
+#ifdef BC7ENC_X86
+	if (bc7enc_hw_avx512_raw())
+	{
+		const uint32_t weight_sets[2][4] = { { 1, 1, 1, 1 }, { 9, 4, 2, 8 } };
+		const uint32_t selector_counts[3] = { 4, 8, 16 };
+		const uint32_t* selector_tables[3] = { g_bc7_weights2, g_bc7_weights3, g_bc7_weights4 };
+		for (int alpha = 0; alpha < 2; alpha++)
+		{
+			for (int table = 0; table < 3; table++)
+			{
+				for (uint32_t n = 1; n <= 16; n++)
+				{
+					bc7enc_selftest_fill(px, 200u + n + (uint32_t)table * 17u, alpha ? 3 : 5);
+					if ((n & 3) == 0)
+					{
+						for (uint32_t i = 0; i < 16; i++)
+							px[i] = px[0];
+					}
+					color_cell_compressor_params cell;
+					memset(&cell, 0, sizeof(cell));
+					cell.m_num_pixels = n > 16 ? 16 : n;
+					cell.m_pPixels = px;
+					cell.m_num_selector_weights = selector_counts[table];
+					cell.m_pSelector_weights = selector_tables[table];
+					cell.m_comp_bits = (table == 2) ? 7 : 6;
+					memcpy(cell.m_weights, weight_sets[n & 1], sizeof(cell.m_weights));
+					cell.m_has_alpha = alpha != 0;
+					cell.m_has_pbits = (n & 4) != 0;
+					cell.m_endpoints_share_pbit = (n & 8) != 0;
+					cell.m_perceptual = false;
+
+					bc7enc_compress_block_params comp;
+					bc7enc_compress_block_params_init(&comp);
+					bc7enc_compress_block_params_init_linear_weights(&comp);
+
+					color_rgba lo, hi;
+					const int max_ep = (1 << cell.m_comp_bits) - 1;
+					if ((n & 3) == 0)
+						color_quad_u8_set(&lo, 4, 4, 4, 4), color_quad_u8_set(&hi, 4, 4, 4, 4);
+					else
+						color_quad_u8_set(&lo, 1, 2, 3, 4), color_quad_u8_set(&hi, max_ep, max_ep - 1, max_ep / 2, max_ep / 3);
+					const uint32_t pbits[2] = { 0, 1 };
+					uint8_t scalar_sel[16], scalar_tmp[16], avx_sel[16], avx_tmp[16];
+					color_cell_compressor_results scalar_res, avx_res;
+					memset(&scalar_res, 0, sizeof(scalar_res));
+					memset(&avx_res, 0, sizeof(avx_res));
+					scalar_res.m_best_overall_err = UINT64_MAX;
+					avx_res.m_best_overall_err = UINT64_MAX;
+					scalar_res.m_pSelectors = scalar_sel;
+					scalar_res.m_pSelectors_temp = scalar_tmp;
+					avx_res.m_pSelectors = avx_sel;
+					avx_res.m_pSelectors_temp = avx_tmp;
+
+					g_bc7enc_avx512_override = 0;
+					const uint64_t scalar_err = evaluate_solution(&lo, &hi, pbits, &cell, &scalar_res, &comp);
+					g_bc7enc_avx512_override = 1;
+					const uint64_t avx_err = evaluate_solution(&lo, &hi, pbits, &cell, &avx_res, &comp);
+					g_bc7enc_avx512_override = -1;
+					if (scalar_err != avx_err || memcmp(scalar_tmp, avx_tmp, cell.m_num_pixels) != 0)
+					{
+						fprintf(stderr, "evaluate_solution mismatch alpha=%d selectors=%u pixels=%u\n", alpha, selector_counts[table], cell.m_num_pixels);
+						failures++;
+					}
+				}
+			}
+		}
+	}
+#endif
+
+	if (failures)
+	{
+		fprintf(stderr, "AVX-512 self-test failed: %d mismatched blocks\n", failures);
+		return 1;
+	}
+	printf("AVX-512 self-test passed\n");
+	return 0;
+}
+
+static double bc7enc_bench_seconds(void)
+{
+	return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static void bc7enc_bench_fill_image(color_rgba* px, uint32_t blocks, int kind)
+{
+	for (uint32_t b = 0; b < blocks; b++)
+		bc7enc_selftest_fill(px + b * 16, b + 1, kind);
+}
+
+static double bc7enc_bench_encode(color_rgba* px, uint32_t blocks, const bc7enc_compress_block_params* params, int override_mode)
+{
+#ifdef BC7ENC_X86
+	g_bc7enc_avx512_override = override_mode;
+#else
+	(void)override_mode;
+#endif
+	uint8_t block[16];
+	const double t0 = bc7enc_bench_seconds();
+	for (uint32_t i = 0; i < blocks; i++)
+		bc7enc_compress_block(block, px + i * 16, params);
+	const double elapsed = bc7enc_bench_seconds() - t0;
+#ifdef BC7ENC_X86
+	g_bc7enc_avx512_override = -1;
+#endif
+	return elapsed;
+}
+
+int bc7enc_run_avx512_bench()
+{
+	bc7enc_compress_block_init();
+	const uint32_t blocks = 4096;
+	color_rgba* px = (color_rgba*)malloc(sizeof(color_rgba) * blocks * 16);
+	if (!px)
+		return 1;
+	bc7enc_bench_fill_image(px, blocks, 2);
+
+	struct bench_case { const char* name; int perceptual; uint32_t uber; uint32_t partitions; };
+	const bench_case cases[3] = {
+		{ "linear uber0 partitions64", 0, 0, 64 },
+		{ "linear uber4 partitions64", 0, 4, 64 },
+		{ "perceptual uber0 partitions64", 1, 0, 64 }
+	};
+
+	printf("bc7enc.cpp AVX-512 benchmark, %u synthetic 4x4 blocks, best of 3 trials\n", blocks);
+#ifdef BC7ENC_X86
+	printf("hardware kernels: %s\n", bc7enc_hw_avx512_raw() ? "available" : "unavailable");
+#else
+	printf("hardware kernels: not compiled for this architecture\n");
+#endif
+	printf("compiler: ");
+#if defined(__clang__)
+	printf("clang %d.%d.%d\n", __clang_major__, __clang_minor__, __clang_patchlevel__);
+#elif defined(__GNUC__)
+	printf("gcc %d.%d.%d\n", __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
+#elif defined(_MSC_VER)
+	printf("msvc %d\n", _MSC_VER);
+#else
+	printf("unknown\n");
+#endif
+
+	for (uint32_t ci = 0; ci < 3; ci++)
+	{
+		bc7enc_compress_block_params params;
+		bc7enc_compress_block_params_init(&params);
+		if (cases[ci].perceptual)
+			bc7enc_compress_block_params_init_perceptual_weights(&params);
+		else
+			bc7enc_compress_block_params_init_linear_weights(&params);
+		params.m_uber_level = cases[ci].uber;
+		params.m_max_partitions = cases[ci].partitions;
+		params.m_mode17_partition_estimation_filterbank = true;
+
+		double scalar_best = 1.0e30, avx_best = 1.0e30;
+		for (int trial = 0; trial < 3; trial++)
+		{
+			const double scalar_dt = bc7enc_bench_encode(px, blocks, &params, 0);
+			const double avx_dt = bc7enc_bench_encode(px, blocks, &params, 1);
+			if (scalar_dt < scalar_best) scalar_best = scalar_dt;
+			if (avx_dt < avx_best) avx_best = avx_dt;
+		}
+		const double scalar_rate = blocks / scalar_best;
+		const double avx_rate = blocks / avx_best;
+		printf("%s: scalar %.1f blocks/s, avx512 %.1f blocks/s, speedup %.3fx\n",
+			cases[ci].name, scalar_rate, avx_rate, avx_rate / scalar_rate);
+	}
+
+	free(px);
+	return 0;
+}
 
 /*
 ------------------------------------------------------------------------------
