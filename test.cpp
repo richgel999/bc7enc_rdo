@@ -59,6 +59,7 @@ static int print_usage()
 	fprintf(stderr, "\nRDO debugging/development:\n");
 	fprintf(stderr, "-zd BC1-7: Enable RDO debug output\n");
 	fprintf(stderr, "-zt BC1-7: Disable RDO multithreading\n");
+	fprintf(stderr, "-avx512-selftest BC7: Compare scalar and AVX-512 bc7enc.cpp blocks, then exit\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "BC1/BC3 RGB specific options:\n");
 	fprintf(stderr, "-b BC1: Don't use 3-color mode transparent texels on blocks containing black or very dark pixels. By default this mode is now enabled.\n");
@@ -297,9 +298,17 @@ static int graph_mode(const std::string& graph_listing_file, rdo_bc::rdo_bc_para
 	return EXIT_SUCCESS;
 }
 
+int bc7enc_run_avx512_selftest();
+
 int main(int argc, char* argv[])
 {
 	bool quiet_mode = false;
+
+	for (int i = 1; i < argc; i++)
+	{
+		if (strcmp(argv[i], "-avx512-selftest") == 0)
+			return bc7enc_run_avx512_selftest();
+	}
 
 	for (int i = 0; i < argc; i++)
 		if (strcmp(argv[i], "-q") == 0)
